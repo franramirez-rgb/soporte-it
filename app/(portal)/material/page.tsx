@@ -4,10 +4,12 @@ import { requireUser } from '@/lib/auth'
 
 export default async function Material() {
   const { supabase, profile } = await requireUser()
-  const [{ data: items = [] }, { data: users = [] }] = await Promise.all([
+  const [{ data: itemsRaw }, { data: usersRaw }] = await Promise.all([
     supabase.from('equipos').select('id,tipo,marca,modelo,identificador,estado_equipo,observaciones,usuario_id,usuarios:usuario_id(nombre),centros:centro_coste_id(nombre)').order('tipo').order('marca'),
     supabase.from('usuarios').select('id,nombre,email').eq('estado_cuenta', 'activo').order('nombre'),
   ])
+  const items = itemsRaw ?? []
+  const users = usersRaw ?? []
   const staff = ['admin', 'controller'].includes(profile.rol)
   return <div className="stack"><div className="hero"><div><h1>Inventario</h1><p>Equipos, asignaciones y estado del material IT.</p></div><span className="badge blue">{items.length} equipos</span></div>
     {staff && <div className="card pad"><h2 className="section-title">Dar de alta equipo</h2><p className="section-subtitle">Se guarda inicialmente como «En stock».</p><form action={createEquipment} className="form-grid" style={{marginTop:14}}><label>Tipo<select className="input" name="tipo"><option value="portatil">Portátil</option><option value="movil">Móvil</option><option value="telefono">Teléfono</option><option value="periferico">Periférico</option><option value="otro">Otro</option></select></label><label>Marca<input className="input" name="marca" required /></label><label>Modelo<input className="input" name="modelo" required /></label><label>Identificador / S/N<input className="input" name="identificador" required /></label><label className="full">Observaciones<textarea className="input" name="observaciones" rows={3} /></label><button className="btn btn-primary full">Dar de alta</button></form></div>}

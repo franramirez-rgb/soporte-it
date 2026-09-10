@@ -23,7 +23,7 @@ export default async function Tickets({ searchParams }: { searchParams: Promise<
   if (filtro === 'cerrados') query = query.eq('estado', 'resuelta')
   if (search) query = query.or(`titulo.ilike.%${search}%,descripcion.ilike.%${search}%`)
 
-  const { data: tickets = [], count = 0 } = await query
+  const { data: ticketsRaw, count = 0 } = await query
   const totalPages = Math.max(1, Math.ceil((count || 0) / pageSize))
   const users = profile.rol === 'admin'
     ? ((await supabase.from('usuarios').select('id,nombre,email').eq('estado_cuenta', 'activo').order('nombre')).data ?? [])

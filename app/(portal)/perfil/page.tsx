@@ -3,11 +3,12 @@ import { requireUser } from '@/lib/auth'
 
 export default async function Perfil() {
   const { supabase, profile } = await requireUser()
-  const { data: equipment } = await supabase
+  const { data: equipmentRaw } = await supabase
     .from('equipos')
     .select('tipo,marca,modelo,identificador,estado_equipo')
     .eq('usuario_id', profile.id)
     .order('tipo')
+  const equipment = equipmentRaw ?? []
 
   return <div className="stack">
     <div>

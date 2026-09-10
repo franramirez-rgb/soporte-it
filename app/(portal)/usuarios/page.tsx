@@ -3,7 +3,7 @@ import { requireRole } from '@/lib/auth'
 
 export default async function Usuarios() {
   const { supabase, profile } = await requireRole(['admin', 'auditor'])
-  const [{ data: users = [] }, { data: centers = [] }] = await Promise.all([
+  const [{ data: usersRaw }, { data: centersRaw }] = await Promise.all([
     supabase.from('usuarios').select('id,nombre,email,rol,estado_cuenta,auth_user_id,centros:centro_coste_id(nombre),puesto,departamento,centro_coste_id').order('nombre'),
     supabase.from('centros_coste').select('id,nombre').order('nombre'),
   ])

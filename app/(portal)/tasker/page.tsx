@@ -10,12 +10,16 @@ export default async function Tasker({ searchParams }: { searchParams: Promise<{
   const startIso = startDate.toISOString()
   const endIso = endDate.toISOString()
   const { supabase, profile } = await requireRole(['admin', 'auditor'])
-  const [{ data: tasks = [] }, { data: centers = [] }, { data: tickets = [] }, { data: regs = [] }] = await Promise.all([
+  const [{ data: tasksRaw }, { data: centersRaw }, { data: ticketsRaw }, { data: regsRaw }] = await Promise.all([
     supabase.from('tareas').select('id,nombre,descripcion,incidencia_id,estado,fecha_creacion,fecha_cierre,centro_coste_id,centros:centro_coste_id(nombre)').eq('eliminado', false).order('fecha_creacion', { ascending: false }),
     supabase.from('centros_coste').select('id,nombre').order('nombre'),
     supabase.from('incidencias').select('id,titulo').eq('eliminado', false).order('id', { ascending: false }),
     supabase.from('tarea_registros').select('id,tarea_id,horas,fecha_creacion').gte('fecha_creacion', startIso).lt('fecha_creacion', endIso).order('fecha_creacion', { ascending: false }),
   ])
+  const regs = regsRaw ?? []
+  const tasks = tasksRaw ?? []
+  const centers = centersRaw ?? []
+  const tickets = ticketsRaw ?? []
   const totalHours = (regs || []).reduce((sum, row) => sum + Number(row.horas), 0)
   const totals = (centers || []).map(center => ({ name: center.nombre, hours: (regs || []).filter(row => tasks.some(task => task.id === row.tarea_id && task.centro_coste_id === center.id)).reduce((sum, row) => sum + Number(row.horas), 0) }))
   return <div className="stack">

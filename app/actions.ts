@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import type { User } from '@supabase/supabase-js'
 import {
   sendEquipmentAssignedUserEmail,
   sendRegistrationVerifiedAdminEmail,
@@ -485,7 +486,7 @@ export async function importUsersCsv(formData: FormData) {
 
   const { data: centers } = await admin.from('centros_coste').select('id,nombre')
   const { data: existingAuth } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
-  let authUsers = existingAuth?.users ?? []
+  let authUsers: User[] = existingAuth?.users ?? []
   let imported = 0
   let equipmentImported = 0
 
@@ -530,7 +531,6 @@ export async function importUsersCsv(formData: FormData) {
   }
 
   revalidatePath('/usuarios'); revalidatePath('/material')
-  return { imported, equipmentImported }
 }
 
 export async function approveUser(id: number) {
