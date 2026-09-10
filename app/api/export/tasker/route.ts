@@ -185,20 +185,32 @@ export async function GET(request: Request) {
     .from('tareas')
     .select('id,nombre,descripcion,estado,fecha_creacion,fecha_cierre,centro_coste_id,centros:centro_coste_id(nombre),incidencia_id,incidencias:incidencia_id(titulo,usuario_id,usuarios:usuario_id(nombre)),tarea_registros(id,horas,comentario,fecha_creacion,usuario_id,usuarios:usuario_id(nombre))')
     .eq('eliminado', false)
-    .eq('estado', 'cerrada')
-    .gte('fecha_cierre', startDate.toISOString())
-    .lt('fecha_cierre', endExclusive.toISOString())
     .order('fecha_creacion', { ascending: true })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const rows = (tasks ?? []) as any[]
+  // Incluimos las tareas cerradas dentro del ciclo legacy y también las tareas
+  // que tienen horas registradas durante el ciclo. Así el Excel coincide con
+  // lo que se ve en Tasker y no queda vacío cuando las tareas siguen abiertas.
+  const rows = ((tasks ?? []) as any[]).filter((task: any) => {
+    const closedInCycle = task.estado === 'cerrada' && task.fecha_cierre
+      && task.fecha_cierre >= startDate.toISOString()
+      && task.fecha_cierre < endExclusive.toISOString()
+    const hasHoursInCycle = (task.tarea_registros ?? []).some((record: any) => {
+      const created = record.fecha_creacion
+      return created && created >= startDate.toISOString() && created < endExclusive.toISOString()
+    })
+    return Boolean(closedInCycle || hasHoursInCycle)
+  })
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
   const hoursByCenter = new Map<string, number>()
   let totalHours = 0
 
   for (const task of rows) {
-    const hours = (task.tarea_registros ?? []).reduce((sum: number, record: any) => sum + Number(record.horas), 0)
-    const center = task.centros?.[0]?.nombre || 'Sin Asignar'
+    const hours = (task.tarea_registros ?? []).filter((record: any) => record.fecha_creacion >= startDate.toISOString() && record.fecha_creacion < endExclusive.toISOString()).reduce((sum: number, record: any) => sum + Number(record.horas), 0)
+    const center = task.centros?.nombre || 'Sin Asignar'
     totalHours += hours
     hoursByCenter.set(center, (hoursByCenter.get(center) || 0) + hours)
   }
@@ -219,30 +231,30 @@ export async function GET(request: Request) {
   const detailRows: string[] = [
     '<row r="1" ht="34"><c r="A1" s="2" t="inlineStr"><is><t>REPORTE DETALLADO DE TAREAS</t></is></c></row>',
     `<row r="2">${inlineCell('A2', 'Ciclo', 3)}${inlineCell('B2', cycleLabel, 3)}</row>`,
-    '<row r="4">' + ['FECHA CREACIÓN','FECHA CIERRE','TÍTULO','DESCRIPCIÓN','CENTRO DE COSTE','CREADO POR','HORAS','REGISTRO DE TRABAJO'].map((header, index) => inlineCell(`${colLetter(index + 1)}4`, header, 1)).join('') + '</row>',
+    '<row r="4">' + ['FECHA CREACIÓN','FECHA CIERRE','ESTADO','TÍTULO','DESCRIPCIÓN','CENTRO DE COSTE','CREADO POR','HORAS','REGISTRO DE TRABAJO'].map((header, index) => inlineCell(`${colLetter(index + 1)}4`, header, 1)).join('') + '</row>',
   ]
 
   let rowNumber = 5
   for (const task of rows) {
-    const records = task.tarea_registros ?? []
-    const creator = task.incidencias?.[0]?.usuarios?.[0]?.nombre || 'Tarea manual'
-    const center = task.centros?.[0]?.nombre || 'Sin Asignar'
+    const records = (task.tarea_registros ?? []).filter((record: any) => record.fecha_creacion >= startDate.toISOString() && record.fecha_creacion < endExclusive.toISOString())
+    const creator = task.incidencias?.usuarios?.nombre || 'Tarea manual'
+    const center = task.centros?.nombre || 'Sin Asignar'
     const hours = records.reduce((sum: number, record: any) => sum + Number(record.horas), 0)
     const work = records.length
-      ? records.map((record: any) => `${new Date(record.fecha_creacion).toLocaleDateString('es-ES')} · ${record.usuarios?.[0]?.nombre || `Usuario #${record.usuario_id}`} · ${Number(record.horas).toFixed(2)} h · ${record.comentario}`).join(' | ')
+      ? records.map((record: any) => `${new Date(record.fecha_creacion).toLocaleDateString('es-ES')} · ${record.usuarios?.nombre || `Usuario #${record.usuario_id}`} · ${Number(record.horas).toFixed(2)} h · ${record.comentario}`).join(' | ')
       : 'Sin registros detallados'
 
-    detailRows.push(`<row r="${rowNumber}">${inlineCell(`A${rowNumber}`, task.fecha_creacion ? new Date(task.fecha_creacion).toLocaleString('es-ES') : '-')}${inlineCell(`B${rowNumber}`, task.fecha_cierre ? new Date(task.fecha_cierre).toLocaleString('es-ES') : '-')}${inlineCell(`C${rowNumber}`, task.nombre)}${inlineCell(`D${rowNumber}`, task.descripcion || '')}${inlineCell(`E${rowNumber}`, center)}${inlineCell(`F${rowNumber}`, creator)}${numberCell(`G${rowNumber}`, hours)}${inlineCell(`H${rowNumber}`, work)}</row>`)
+    detailRows.push(`<row r="${rowNumber}">${inlineCell(`A${rowNumber}`, task.fecha_creacion ? new Date(task.fecha_creacion).toLocaleString('es-ES') : '-')}${inlineCell(`B${rowNumber}`, task.fecha_cierre ? new Date(task.fecha_cierre).toLocaleString('es-ES') : '-')}${inlineCell(`C${rowNumber}`, task.estado)}${inlineCell(`D${rowNumber}`, task.nombre)}${inlineCell(`E${rowNumber}`, task.descripcion || '')}${inlineCell(`F${rowNumber}`, center)}${inlineCell(`G${rowNumber}`, creator)}${numberCell(`H${rowNumber}`, hours)}${inlineCell(`I${rowNumber}`, work)}</row>`)
     rowNumber++
   }
 
-  detailRows.push(`<row r="${rowNumber}" ht="24">${inlineCell(`A${rowNumber}`, '')}${inlineCell(`B${rowNumber}`, '')}${inlineCell(`C${rowNumber}`, '')}${inlineCell(`D${rowNumber}`, '')}${inlineCell(`E${rowNumber}`, 'TOTAL HORAS', 1)}${inlineCell(`F${rowNumber}`, '')}${numberCell(`G${rowNumber}`, totalHours)}${inlineCell(`H${rowNumber}`, '', 1)}</row>`)
+  detailRows.push(`<row r="${rowNumber}" ht="24">${inlineCell(`A${rowNumber}`, '')}${inlineCell(`B${rowNumber}`, '')}${inlineCell(`C${rowNumber}`, '')}${inlineCell(`D${rowNumber}`, '')}${inlineCell(`E${rowNumber}`, '')}${inlineCell(`F${rowNumber}`, 'TOTAL HORAS', 1)}${inlineCell(`G${rowNumber}`, '')}${numberCell(`H${rowNumber}`, totalHours)}${inlineCell(`I${rowNumber}`, '', 1)}</row>`)
 
   const summaryCols = '<cols><col min="1" max="1" width="28" customWidth="1"/><col min="2" max="2" width="18" customWidth="1"/><col min="3" max="3" width="20" customWidth="1"/><col min="4" max="4" width="22" customWidth="1"/></cols>'
-  const detailCols = '<cols><col min="1" max="1" width="20" customWidth="1"/><col min="2" max="2" width="20" customWidth="1"/><col min="3" max="3" width="32" customWidth="1"/><col min="4" max="4" width="42" customWidth="1"/><col min="5" max="5" width="24" customWidth="1"/><col min="6" max="6" width="30" customWidth="1"/><col min="7" max="7" width="14" customWidth="1"/><col min="8" max="8" width="70" customWidth="1"/></cols>'
+  const detailCols = '<cols><col min="1" max="1" width="20" customWidth="1"/><col min="2" max="2" width="20" customWidth="1"/><col min="3" max="3" width="14" customWidth="1"/><col min="4" max="4" width="32" customWidth="1"/><col min="5" max="5" width="42" customWidth="1"/><col min="6" max="6" width="24" customWidth="1"/><col min="7" max="7" width="30" customWidth="1"/><col min="8" max="8" width="14" customWidth="1"/><col min="9" max="9" width="70" customWidth="1"/></cols>'
 
   const summarySheet = worksheetXml({ cols: summaryCols, rows: summaryRows, freezeRows: 5, merges: ['A1:D1'] })
-  const detailSheet = worksheetXml({ cols: detailCols, rows: detailRows, freezeRows: 4, autoFilter: `A4:H${Math.max(4, rowNumber - 1)}`, merges: ['A1:H1'] })
+  const detailSheet = worksheetXml({ cols: detailCols, rows: detailRows, freezeRows: 4, autoFilter: `A4:I${Math.max(4, rowNumber - 1)}`, merges: ['A1:I1'] })
 
   const files = [
     { name: '[Content_Types].xml', data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`, 'utf8') },

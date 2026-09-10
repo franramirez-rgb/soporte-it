@@ -297,7 +297,7 @@ export async function createTask(formData: FormData) {
       .select('usuario_id,usuarios:usuario_id(centro_coste_id)')
       .eq('id', incidenceId)
       .single()
-    centerId = incidence?.usuarios?.[0]?.centro_coste_id ?? null
+    centerId = incidence?.usuarios?.centro_coste_id ?? null
   }
 
   const { error } = await admin.from('tareas').insert({
@@ -319,14 +319,10 @@ export async function editTask(formData: FormData) {
   const incidenceId = formData.get('incidencia_id') ? Number(formData.get('incidencia_id')) : null
   let centerId = formData.get('centro_coste_id') ? Number(formData.get('centro_coste_id')) : null
 
-  if (incidenceId) {
-    const { data: incidence } = await admin
-      .from('incidencias')
-      .select('usuario_id,usuarios:usuario_id(centro_coste_id)')
-      .eq('id', incidenceId)
-      .single()
-    centerId = incidence?.usuarios?.[0]?.centro_coste_id ?? null
-  }
+  // Al editar una tarea, el centro de coste seleccionado por el administrador
+  // debe ser el valor que se guarde. El centro del creador se utiliza para
+  // inicializar las tareas automáticas creadas desde una incidencia, pero no
+  // debe sobrescribir una modificación posterior.
 
   const { error } = await admin.from('tareas').update({
     nombre: String(formData.get('nombre') || '').trim(),
