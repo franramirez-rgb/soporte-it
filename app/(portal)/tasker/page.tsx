@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { createCostCenter, createTask, deleteCostCenter, deleteTask, editTask, toggleTask } from '@/app/actions'
 import { requireRole } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { oneRelation } from '@/lib/supabase/relations'
 
 export default async function Tasker({
   searchParams,
@@ -36,12 +37,12 @@ export default async function Tasker({
     (() => {
       let query = supabase
         .from('tareas')
-        .select('id,nombre,descripcion,incidencia_id,estado,fecha_creacion,fecha_cierre,centro_coste_id,centros:centro_coste_id(nombre),incidencias:incidencia_id(titulo,usuarios:usuario_id(nombre))', { count: 'exact' })
+        .select('id,nombre,descripcion,incidencia_id,estado,fecha_creacion,fecha_cierre,centro_coste_id,centros:centro_coste_id(nombre),incidencias:incidencia_id(titulo,usuarios:usuario_id(nombre,centro_coste_id,centros:centro_coste_id(nombre)))', { count: 'exact' })
         .eq('eliminado', false)
       query = vista === 'archivo' ? query.eq('estado', 'cerrada') : query.neq('estado', 'cerrada')
       return query.order('fecha_creacion', { ascending: false }).range((page - 1) * pageSize, page * pageSize - 1)
     })(),
-    supabase.from('tareas').select('id,centro_coste_id').eq('eliminado', false),
+    supabase.from('tareas').select('id,centro_coste_id,incidencias:incidencia_id(usuario_id,usuarios:usuario_id(centro_coste_id))').eq('eliminado', false),
     supabase.from('centros_coste').select('id,nombre').order('nombre'),
     isAdmin
       ? supabase.from('incidencias').select('id,titulo').eq('eliminado', false).order('id', { ascending: false })
@@ -53,7 +54,7 @@ export default async function Tasker({
       .lt('fecha_creacion', endDate.toISOString())
       .order('fecha_creacion', { ascending: false }),
     adminForEdit
-      ? adminForEdit.from('tareas').select('id,nombre,descripcion,incidencia_id,estado,centro_coste_id').eq('id', editId).eq('eliminado', false).maybeSingle()
+      ? adminForEdit.from('tareas').select('id,nombre,descripcion,incidencia_id,estado,centro_coste_id,incidencias:incidencia_id(usuario_id,usuarios:usuario_id(centro_coste_id))').eq('id', editId).eq('eliminado', false).maybeSingle()
       : Promise.resolve({ data: null }),
   ])
 
@@ -69,7 +70,11 @@ export default async function Tasker({
     hoursByTask.set(row.tarea_id, (hoursByTask.get(row.tarea_id) || 0) + Number(row.horas))
   }
 
-  const centerByTask = new Map<number, number | null>(taskMeta.map(task => [task.id, task.centro_coste_id] as const))
+  const centerByTask = new Map<number, number | null>(taskMeta.map(task => {
+    const incident = oneRelation((task as any).incidencias)
+    const creator = oneRelation(incident?.usuarios)
+    return [task.id, creator?.centro_coste_id ?? task.centro_coste_id ?? null] as const
+  }))
   const hoursByCenter = new Map<number, number>()
   for (const row of regs) {
     const centerId = centerByTask.get(row.tarea_id)
@@ -125,7 +130,7 @@ export default async function Tasker({
             <input type="hidden" name="id" value={editingTask.id} />
             <label>Nombre<input className="input" name="nombre" defaultValue={editingTask.nombre} required /></label>
             <label>Incidencia<select className="input" name="incidencia_id" defaultValue={editingTask.incidencia_id || ''}><option value="">Sin incidencia</option>{tickets.map(ticket => <option key={ticket.id} value={ticket.id}>#INC-{String(ticket.id).padStart(3, '0')} · {ticket.titulo}</option>)}</select></label>
-            <label>Centro de coste<select className="input" name="centro_coste_id" defaultValue={editingTask.centro_coste_id || ''}><option value="">Sin asignar</option>{centers.map(center => <option key={center.id} value={center.id}>{center.nombre}</option>)}</select></label>
+            <label>Centro de coste<select className="input" name="centro_coste_id" defaultValue={oneRelation(oneRelation(editingTask.incidencias)?.usuarios)?.centro_coste_id ?? editingTask.centro_coste_id ?? ''}><option value="">Sin asignar</option>{centers.map(center => <option key={center.id} value={center.id}>{center.nombre}</option>)}</select></label>
             <label className="full">Descripción<textarea className="input" name="descripcion" rows={4} defaultValue={editingTask.descripcion || ''} /></label>
             <button className="btn btn-primary">Guardar cambios</button>
           </form>
@@ -157,8 +162,16 @@ export default async function Tasker({
                     <div className="small muted truncate">{task.descripcion}</div>
                   </td>
                   <td>{task.incidencia_id ? `#INC-${String(task.incidencia_id).padStart(3, '0')}` : '—'}</td>
-                  <td>{task.incidencias?.[0]?.usuarios?.[0]?.nombre || '—'}</td>
-                  <td>{task.centros?.[0]?.nombre || 'Sin asignar'}</td>
+                  {(() => {
+                    const incident = oneRelation(task.incidencias)
+                    const creator = oneRelation(incident?.usuarios)
+                    const creatorCenter = oneRelation(creator?.centros)
+                    const taskCenter = oneRelation(task.centros)
+                    return <>
+                      <td>{creator?.nombre || '—'}</td>
+                      <td>{creatorCenter?.nombre || taskCenter?.nombre || 'Sin asignar'}</td>
+                    </>
+                  })()}
                   <td><strong>{(hoursByTask.get(task.id) || 0).toFixed(2)} h</strong></td>
                   <td><span className={`badge ${task.estado === 'cerrada' ? 'green' : 'blue'}`}>{task.estado}</span></td>
                   <td>

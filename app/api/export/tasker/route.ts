@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireRole } from '@/lib/auth'
+import { oneRelation } from '@/lib/supabase/relations'
 
 export const runtime = 'nodejs'
 
@@ -183,7 +184,7 @@ export async function GET(request: Request) {
   const { supabase } = await requireRole(['admin', 'auditor'])
   const { data: tasks, error } = await supabase
     .from('tareas')
-    .select('id,nombre,descripcion,estado,fecha_creacion,fecha_cierre,centro_coste_id,centros:centro_coste_id(nombre),incidencia_id,incidencias:incidencia_id(titulo,usuario_id,usuarios:usuario_id(nombre)),tarea_registros(id,horas,comentario,fecha_creacion,usuario_id,usuarios:usuario_id(nombre))')
+    .select('id,nombre,descripcion,estado,fecha_creacion,fecha_cierre,centro_coste_id,centros:centro_coste_id(nombre),incidencia_id,incidencias:incidencia_id(titulo,usuario_id,usuarios:usuario_id(nombre,centro_coste_id,centros:centro_coste_id(nombre))),tarea_registros(id,horas,comentario,fecha_creacion,usuario_id,usuarios:usuario_id(nombre))')
     .eq('eliminado', false)
     .order('fecha_creacion', { ascending: true })
 
@@ -208,7 +209,11 @@ export async function GET(request: Request) {
 
   for (const task of rows) {
     const hours = (task.tarea_registros ?? []).filter((record: any) => record.fecha_creacion >= startDate.toISOString() && record.fecha_creacion < endExclusive.toISOString()).reduce((sum: number, record: any) => sum + Number(record.horas), 0)
-    const center = task.centros?.[0]?.nombre || 'Sin Asignar'
+    const incident = oneRelation(task.incidencias)
+    const creator = oneRelation(incident?.usuarios)
+    const creatorCenter = oneRelation(creator?.centros)
+    const taskCenter = oneRelation(task.centros)
+    const center = creatorCenter?.nombre || taskCenter?.nombre || 'Sin Asignar'
     totalHours += hours
     hoursByCenter.set(center, (hoursByCenter.get(center) || 0) + hours)
   }
@@ -235,14 +240,17 @@ export async function GET(request: Request) {
   let rowNumber = 5
   for (const task of rows) {
     const records = (task.tarea_registros ?? []).filter((record: any) => record.fecha_creacion >= startDate.toISOString() && record.fecha_creacion < endExclusive.toISOString())
-    const creator = task.incidencias?.[0]?.usuarios?.[0]?.nombre || 'Tarea manual'
-    const center = task.centros?.[0]?.nombre || 'Sin Asignar'
+    const incident = oneRelation(task.incidencias)
+    const creator = oneRelation(incident?.usuarios)
+    const creatorCenter = oneRelation(creator?.centros)
+    const taskCenter = oneRelation(task.centros)
+    const center = creatorCenter?.nombre || taskCenter?.nombre || 'Sin Asignar'
     const hours = records.reduce((sum: number, record: any) => sum + Number(record.horas), 0)
     const work = records.length
-      ? records.map((record: any) => `${new Date(record.fecha_creacion).toLocaleDateString('es-ES')} · ${record.usuarios?.[0]?.nombre || `Usuario #${record.usuario_id}`} · ${Number(record.horas).toFixed(2)} h · ${record.comentario}`).join(' | ')
+      ? records.map((record: any) => `${new Date(record.fecha_creacion).toLocaleDateString('es-ES')} · ${oneRelation(record.usuarios)?.nombre || `Usuario #${record.usuario_id}`} · ${Number(record.horas).toFixed(2)} h · ${record.comentario}`).join(' | ')
       : 'Sin registros detallados'
 
-    detailRows.push(`<row r="${rowNumber}">${inlineCell(`A${rowNumber}`, task.fecha_creacion ? new Date(task.fecha_creacion).toLocaleString('es-ES') : '-')}${inlineCell(`B${rowNumber}`, task.fecha_cierre ? new Date(task.fecha_cierre).toLocaleString('es-ES') : '-')}${inlineCell(`C${rowNumber}`, task.estado)}${inlineCell(`D${rowNumber}`, task.nombre)}${inlineCell(`E${rowNumber}`, task.descripcion || '')}${inlineCell(`F${rowNumber}`, center)}${inlineCell(`G${rowNumber}`, creator)}${numberCell(`H${rowNumber}`, hours)}${inlineCell(`I${rowNumber}`, work)}</row>`)
+    detailRows.push(`<row r="${rowNumber}">${inlineCell(`A${rowNumber}`, task.fecha_creacion ? new Date(task.fecha_creacion).toLocaleString('es-ES') : '-')}${inlineCell(`B${rowNumber}`, task.fecha_cierre ? new Date(task.fecha_cierre).toLocaleString('es-ES') : '-')}${inlineCell(`C${rowNumber}`, task.estado)}${inlineCell(`D${rowNumber}`, task.nombre)}${inlineCell(`E${rowNumber}`, task.descripcion || '')}${inlineCell(`F${rowNumber}`, center)}${inlineCell(`G${rowNumber}`, creatorName)}${numberCell(`H${rowNumber}`, hours)}${inlineCell(`I${rowNumber}`, work)}</row>`)
     rowNumber++
   }
 

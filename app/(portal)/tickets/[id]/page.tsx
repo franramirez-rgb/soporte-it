@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { addTicketMessage, closeTicket, reopenTicket, startTicket } from '@/app/actions'
 import { requireUser } from '@/lib/auth'
 import { TicketLive } from '@/components/ticket-live'
+import { oneRelation } from '@/lib/supabase/relations'
 
 export default async function TicketDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -33,7 +34,7 @@ export default async function TicketDetail({ params }: { params: Promise<{ id: s
       <div>
         <Link href="/tickets" className="small" style={{ color: '#2563eb' }}>← Volver a incidencias</Link>
         <h1 style={{ margin: '8px 0 4px' }}>#INC-{String(ticket.id).padStart(3, '0')} · {ticket.titulo}</h1>
-        <div className="muted">{new Date(ticket.fecha_creacion).toLocaleString('es-ES')} · {ticket.usuarios?.[0]?.nombre}</div>
+        <div className="muted">{new Date(ticket.fecha_creacion).toLocaleString('es-ES')} · {oneRelation(ticket.usuarios)?.nombre}</div>
       </div>
       <div className="row-actions">
         {profile.rol === 'admin' && ticket.estado === 'abierta' && <form action={startTicket.bind(null, ticket.id)}><button className="btn btn-warning">Poner en proceso</button></form>}

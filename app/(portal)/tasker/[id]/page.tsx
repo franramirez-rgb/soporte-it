@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { logHours } from '@/app/actions'
 import { requireRole } from '@/lib/auth'
+import { oneRelation } from '@/lib/supabase/relations'
 
 export default async function TaskDetail({
   params,
@@ -38,9 +39,11 @@ export default async function TaskDetail({
 
   const records = (recordsRaw ?? []) as any[]
   const totalHours = records.reduce((sum, row) => sum + Number(row.horas), 0)
-  const incident = task.incidencias?.[0] ?? null
-  const creator = incident?.usuarios?.[0] ?? null
-  const centerName = task.centros?.[0]?.nombre || creator?.centros?.[0]?.nombre || 'Sin asignar'
+  const incident = oneRelation(task.incidencias)
+  const creator = oneRelation(incident?.usuarios)
+  const taskCenter = oneRelation(task.centros)
+  const creatorCenter = oneRelation(creator?.centros)
+  const centerName = creatorCenter?.nombre || taskCenter?.nombre || 'Sin asignar'
   const backHref = `/tasker?month=${encodeURIComponent(month)}&vista=${vista}&page=${page}`
 
   return (
@@ -94,7 +97,7 @@ export default async function TaskDetail({
             <tbody>{records.map(record => (
               <tr key={record.id}>
                 <td>{new Date(record.fecha_creacion).toLocaleString('es-ES')}</td>
-                <td>{record.usuarios?.[0]?.nombre || `Usuario #${record.usuario_id}`}</td>
+                <td>{oneRelation(record.usuarios)?.nombre || `Usuario #${record.usuario_id}`}</td>
                 <td><strong>{Number(record.horas).toFixed(2)} h</strong></td>
                 <td style={{ whiteSpace: 'pre-wrap' }}>{record.comentario}</td>
               </tr>

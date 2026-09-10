@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { createEquipment, deleteEquipment, editEquipment, releaseEquipment } from '@/app/actions'
 import { AssignEquipmentForm } from '@/components/assign-equipment-form'
 import { requireUser } from '@/lib/auth'
+import { oneRelation } from '@/lib/supabase/relations'
 
 export default async function Material({ searchParams }: { searchParams: Promise<{ page?: string; editar?: string }> }) {
   const params = await searchParams
@@ -61,7 +62,7 @@ export default async function Material({ searchParams }: { searchParams: Promise
 
     <div className="card"><div className="table-wrap"><table className="table"><thead><tr><th>Tipo</th><th>Equipo</th><th>S/N</th><th>Usuario</th><th>Centro</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>
       {items.map(item => <tr key={item.id}>
-        <td>{item.tipo}</td><td><strong>{item.marca} {item.modelo}</strong><div className="small muted truncate">{item.observaciones}</div></td><td><code>{item.identificador}</code></td><td>{item.usuarios?.[0]?.nombre || 'Sin asignar'}</td><td>{item.centros?.[0]?.nombre || 'Sin asignar'}</td>
+        <td>{item.tipo}</td><td><strong>{item.marca} {item.modelo}</strong><div className="small muted truncate">{item.observaciones}</div></td><td><code>{item.identificador}</code></td><td>{oneRelation(item.usuarios)?.nombre || 'Sin asignar'}</td><td>{oneRelation(item.centros)?.nombre || 'Sin asignar'}</td>
         <td><span className={`badge ${item.estado_equipo === 'en_stock' ? 'green' : item.estado_equipo === 'asignado' ? 'blue' : item.estado_equipo === 'reparacion' ? 'amber' : 'red'}`}>{item.estado_equipo.replace('_', ' ')}</span></td>
         <td>{staff && <div className="row-actions"><Link className="btn btn-secondary btn-sm" href={query(page, item.id)}>Gestionar</Link>{item.usuario_id && <form action={releaseEquipment.bind(null, item.id, 'en_stock')}><button className="btn btn-warning btn-sm">Liberar</button></form>}<form action={deleteEquipment.bind(null, item.id)}><button className="btn btn-danger btn-sm">Borrar</button></form></div>}</td>
       </tr>)}
