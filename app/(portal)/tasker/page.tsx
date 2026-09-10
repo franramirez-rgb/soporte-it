@@ -109,7 +109,7 @@ export default async function Tasker({
             <tbody>{tasks.map(task => <tr key={task.id}>
               <td><strong>{task.nombre}</strong><div className="small muted truncate">{task.descripcion}</div></td>
               <td>{task.incidencia_id ? `#INC-${String(task.incidencia_id).padStart(3, '0')}` : '—'}</td>
-              <td>{task.centros?.nombre || 'Sin asignar'}</td>
+              <td>{task.centros?.[0]?.nombre || 'Sin asignar'}</td>
               <td><strong>{(hoursByTask.get(task.id) || 0).toFixed(2)} h</strong></td>
               <td><span className={`badge ${task.estado === 'cerrada' ? 'green' : 'blue'}`}>{task.estado}</span></td>
               <td>{isAdmin && <div className="row-actions">

@@ -44,7 +44,7 @@ export async function GET(request: Request) {
       task.fecha_creacion,
       task.nombre,
       task.descripcion || '',
-      task.centros?.nombre || 'Sin Asignar',
+      task.centros?.[0]?.nombre || 'Sin Asignar',
       task.estado,
       hours.toFixed(2),
       entries.map(row => row.comentario).join(' | '),
