@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { User } from '@supabase/supabase-js'
@@ -26,32 +27,30 @@ function isStaff(role: string) {
 
 async function ctx() {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  const { data, error: authError } = await supabase.auth.getClaims()
+  const authUserId = data?.claims?.sub
+  if (authError || typeof authUserId !== 'string' || !authUserId) redirect('/login')
 
   const admin = createAdminClient()
   const { data: profile, error } = await admin
     .from('usuarios')
-    .select('*')
-    .eq('auth_user_id', user.id)
+    .select('id,auth_user_id,nombre,email,rol,estado_cuenta,centro_coste_id,puesto,departamento,estado_material')
+    .eq('auth_user_id', authUserId)
     .single()
 
   if (error || !profile || profile.estado_cuenta !== 'activo') redirect('/pendiente')
-  return { supabase, admin, user, profile }
+  return { supabase, admin, user: { id: authUserId }, profile }
 }
 
 async function notifyUsers(admin: ReturnType<typeof createAdminClient>, users: number[], tipo: string, titulo: string, mensaje: string, enlace: string) {
   const ids = [...new Set(users)]
   if (!ids.length) return
-  await admin.from('notificaciones').insert(ids.map(usuario_id => ({ usuario_id, tipo, titulo, mensaje, enlace })))
+  const { error } = await admin.from('notificaciones').insert(ids.map(usuario_id => ({ usuario_id, tipo, titulo, mensaje, enlace })))
+  if (error) throw new Error(error.message)
 }
 
 async function staffRecipients(admin: ReturnType<typeof createAdminClient>) {
-  const { data } = await admin
-    .from('usuarios')
-    .select('id')
-    .in('rol', ['admin', 'auditor'])
-    .eq('estado_cuenta', 'activo')
+  const { data } = await admin.from('usuarios').select('id').in('rol', ['admin', 'auditor']).eq('estado_cuenta', 'activo')
   return (data ?? []).map(x => x.id)
 }
 
@@ -69,10 +68,7 @@ async function uploadAttachment(admin: ReturnType<typeof createAdminClient>, tic
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
   const path = `incidencia-${ticketId}/${crypto.randomUUID()}-${safeName || `adjunto.${extension}`}`
   const bytes = new Uint8Array(await file.arrayBuffer())
-  const { error } = await admin.storage.from('ticket-attachments').upload(path, bytes, {
-    contentType: file.type,
-    upsert: false,
-  })
+  const { error } = await admin.storage.from('ticket-attachments').upload(path, bytes, { contentType: file.type, upsert: false })
   if (error) throw new Error(error.message)
   return path
 }
@@ -87,62 +83,35 @@ export async function createTicket(formData: FormData) {
 
   const requestedAuthorId = Number(formData.get('autor_id') || 0)
   const authorId = profile.rol === 'admin' && requestedAuthorId ? requestedAuthorId : profile.id
-  const { data: author } = await admin
-    .from('usuarios')
-    .select('id,nombre,email,centro_coste_id')
-    .eq('id', authorId)
-    .single()
+  const { data: author } = await admin.from('usuarios').select('id,nombre,email,centro_coste_id').eq('id', authorId).single()
   if (!author) throw new Error('Usuario no encontrado.')
 
-  const { data: ticket, error } = await admin.from('incidencias').insert({
-    titulo: title,
-    descripcion: description,
-    usuario_id: authorId,
-    estado: 'abierta',
-    eliminado: false,
-  }).select('id').single()
+  const { data: ticket, error } = await admin.from('incidencias').insert({ titulo: title, descripcion: description, usuario_id: authorId, estado: 'abierta', eliminado: false }).select('id').single()
   if (error || !ticket) throw new Error(error?.message || 'No se pudo crear la incidencia.')
 
   const file = formData.get('adjunto')
   const attachmentPath = file instanceof File && file.size > 0 ? await uploadAttachment(admin, ticket.id, file) : null
   if (attachmentPath) {
-    const { error: messageError } = await admin.from('mensajes').insert({
-      incidencia_id: ticket.id,
-      usuario_id: authorId,
-      mensaje: 'Archivo adjunto subido.',
-      adjunto: attachmentPath,
-    })
+    const { error: messageError } = await admin.from('mensajes').insert({ incidencia_id: ticket.id, usuario_id: authorId, mensaje: 'Archivo adjunto subido.', adjunto: attachmentPath })
     if (messageError) throw new Error(messageError.message)
   }
 
-  // Se conserva el comportamiento original: cada incidencia crea una tarea asociada.
-  const { error: taskError } = await admin.from('tareas').insert({
-    nombre: title,
-    descripcion: description,
-    incidencia_id: ticket.id,
-    centro_coste_id: author.centro_coste_id,
-    estado: 'abierta',
-    eliminado: false,
-  })
-  if (taskError) throw new Error(taskError.message)
-
-  const recipients = await staffRecipients(admin)
-  const { error: notificationError } = await admin.from('notificaciones').insert(
-    recipients.map(usuario_id => ({
-      usuario_id,
-      tipo: 'ticket',
-      titulo: `Nueva incidencia #INC-${String(ticket.id).padStart(3, '0')}`,
-      mensaje: `${author.nombre}: ${title}`,
-      enlace: `/tickets/${ticket.id}`,
-    })),
-  )
-  if (notificationError && recipients.length) throw new Error(notificationError.message)
-
-  // El correo es una operación secundaria: un fallo SMTP no debe borrar ni bloquear el ticket.
-  await Promise.allSettled([
-    sendTicketCreatedAdminEmail({ id: ticket.id, title, description, userName: author.nombre }),
-    sendTicketCreatedUserEmail({ id: ticket.id, title, description, name: author.nombre, email: author.email }),
+  const [taskResult, recipients] = await Promise.all([
+    admin.from('tareas').insert({ nombre: title, descripcion: description, incidencia_id: ticket.id, centro_coste_id: author.centro_coste_id, estado: 'abierta', eliminado: false }),
+    staffRecipients(admin),
   ])
+  if (taskResult.error) throw new Error(taskResult.error.message)
+
+  if (recipients.length) {
+    await notifyUsers(admin, recipients, 'ticket', `Nueva incidencia #INC-${String(ticket.id).padStart(3, '0')}`, `${author.nombre}: ${title}`, `/tickets/${ticket.id}`)
+  }
+
+  after(async () => {
+    await Promise.allSettled([
+      sendTicketCreatedAdminEmail({ id: ticket.id, title, description, userName: author.nombre }),
+      sendTicketCreatedUserEmail({ id: ticket.id, title, description, name: author.nombre, email: author.email }),
+    ])
+  })
 
   revalidatePath('/tickets')
   revalidatePath('/dashboard')
@@ -158,53 +127,25 @@ export async function addTicketMessage(formData: FormData) {
   const hasFile = file instanceof File && file.size > 0
   if (!ticketId || (!message && !hasFile)) return
 
-  const { data: ticket } = await admin
-    .from('incidencias')
-    .select('id,titulo,usuario_id,estado')
-    .eq('id', ticketId)
-    .eq('eliminado', false)
-    .single()
+  const { data: ticket } = await admin.from('incidencias').select('id,titulo,usuario_id,estado').eq('id', ticketId).eq('eliminado', false).single()
   if (!ticket) throw new Error('Ticket no encontrado.')
-
-  if (profile.rol !== 'admin' && profile.rol !== 'controller' && ticket.usuario_id !== profile.id) {
-    throw new Error('No tienes permiso para responder a este ticket.')
-  }
+  if (profile.rol !== 'admin' && profile.rol !== 'controller' && ticket.usuario_id !== profile.id) throw new Error('No tienes permiso para responder a este ticket.')
 
   const { data: owner } = await admin.from('usuarios').select('id,nombre,email').eq('id', ticket.usuario_id).single()
   if (!owner) throw new Error('Propietario del ticket no encontrado.')
 
   const attachmentPath = hasFile ? await uploadAttachment(admin, ticketId, file as File) : null
   const text = message || 'Se ha añadido un archivo adjunto.'
-  const { error } = await admin.from('mensajes').insert({
-    incidencia_id: ticketId,
-    usuario_id: profile.id,
-    mensaje: text,
-    adjunto: attachmentPath,
-  })
+  const { error } = await admin.from('mensajes').insert({ incidencia_id: ticketId, usuario_id: profile.id, mensaje: text, adjunto: attachmentPath })
   if (error) throw new Error(error.message)
 
-  // Igualamos la lógica anterior: respuestas de soporte llegan al empleado;
-  // respuestas del empleado llegan a informática.
   const fromSupport = profile.rol === 'admin' || profile.rol === 'controller'
-  const destinationEmail = fromSupport ? owner.email : (process.env.IT_EMAIL || 'informatica@rebios.info')
-
-  await sendTicketMessageEmail({
-    id: ticketId,
-    title: ticket.titulo,
-    senderName: profile.nombre,
-    message: text,
-    email: destinationEmail,
-  })
-
   const destinationUsers = fromSupport ? [owner.id] : await staffRecipients(admin)
-  await notifyUsers(
-    admin,
-    destinationUsers,
-    'mensaje',
-    `Nueva respuesta en #INC-${String(ticketId).padStart(3, '0')}`,
-    profile.nombre,
-    `/tickets/${ticketId}`,
-  )
+  await notifyUsers(admin, destinationUsers, 'mensaje', `Nueva respuesta en #INC-${String(ticketId).padStart(3, '0')}`, profile.nombre, `/tickets/${ticketId}`)
+
+  after(async () => {
+    await sendTicketMessageEmail({ id: ticketId, title: ticket.titulo, senderName: profile.nombre, message: text, email: fromSupport ? owner.email : (process.env.IT_EMAIL || 'informatica@rebios.info') })
+  })
 
   revalidatePath(`/tickets/${ticketId}`)
   revalidatePath('/tickets')
@@ -214,20 +155,19 @@ export async function startTicket(id: number) {
   const { admin, profile } = await ctx()
   if (profile.rol !== 'admin') return
 
-  const { data: ticket } = await admin
-    .from('incidencias')
-    .select('id,titulo,usuario_id,estado')
-    .eq('id', id)
-    .eq('eliminado', false)
-    .single()
+  const { data: ticket } = await admin.from('incidencias').select('id,titulo,usuario_id,estado').eq('id', id).eq('eliminado', false).single()
   if (!ticket || ticket.estado !== 'abierta') return
 
-  await admin.from('incidencias').update({ estado: 'en_proceso' }).eq('id', id)
-  await admin.from('tareas').update({ estado: 'abierta' }).eq('incidencia_id', id)
+  const [{ error: ticketError }, { error: taskError }, { data: owner }] = await Promise.all([
+    admin.from('incidencias').update({ estado: 'en_proceso' }).eq('id', id),
+    admin.from('tareas').update({ estado: 'abierta' }).eq('incidencia_id', id),
+    admin.from('usuarios').select('nombre,email').eq('id', ticket.usuario_id).single(),
+  ])
+  if (ticketError) throw new Error(ticketError.message)
+  if (taskError) throw new Error(taskError.message)
 
-  const { data: owner } = await admin.from('usuarios').select('nombre,email').eq('id', ticket.usuario_id).single()
-  if (owner) await sendTicketInProcessUserEmail({ id, title: ticket.titulo, name: owner.nombre, email: owner.email })
   await notifyUsers(admin, [ticket.usuario_id], 'ticket', `#INC-${String(id).padStart(3, '0')} en proceso`, 'Soporte IT ha empezado a trabajar en tu incidencia.', `/tickets/${id}`)
+  if (owner) after(() => sendTicketInProcessUserEmail({ id, title: ticket.titulo, name: owner.nombre, email: owner.email }))
 
   revalidatePath(`/tickets/${id}`)
   revalidatePath('/tickets')
@@ -240,14 +180,18 @@ export async function closeTicket(id: number) {
 
   const { data: ticket } = await admin.from('incidencias').select('id,titulo,usuario_id').eq('id', id).single()
   if (!ticket) return
-
   const now = new Date().toISOString()
-  await admin.from('incidencias').update({ estado: 'resuelta' }).eq('id', id)
-  await admin.from('tareas').update({ estado: 'cerrada', fecha_cierre: now }).eq('incidencia_id', id)
 
-  const { data: owner } = await admin.from('usuarios').select('nombre,email').eq('id', ticket.usuario_id).single()
-  if (owner) await sendTicketClosedUserEmail({ id, title: ticket.titulo, name: owner.nombre, email: owner.email })
+  const [{ error: ticketError }, { error: taskError }, { data: owner }] = await Promise.all([
+    admin.from('incidencias').update({ estado: 'resuelta' }).eq('id', id),
+    admin.from('tareas').update({ estado: 'cerrada', fecha_cierre: now }).eq('incidencia_id', id),
+    admin.from('usuarios').select('nombre,email').eq('id', ticket.usuario_id).single(),
+  ])
+  if (ticketError) throw new Error(ticketError.message)
+  if (taskError) throw new Error(taskError.message)
+
   await notifyUsers(admin, [ticket.usuario_id], 'ticket', `#INC-${String(id).padStart(3, '0')} resuelto`, 'La incidencia ha sido cerrada por Soporte IT.', `/tickets/${id}`)
+  if (owner) after(() => sendTicketClosedUserEmail({ id, title: ticket.titulo, name: owner.nombre, email: owner.email }))
 
   revalidatePath(`/tickets/${id}`)
   revalidatePath('/tickets')
@@ -261,12 +205,16 @@ export async function reopenTicket(id: number) {
   const { data: ticket } = await admin.from('incidencias').select('id,titulo,usuario_id').eq('id', id).single()
   if (!ticket) return
 
-  await admin.from('incidencias').update({ estado: 'abierta' }).eq('id', id)
-  await admin.from('tareas').update({ estado: 'abierta', fecha_cierre: null }).eq('incidencia_id', id)
+  const [{ error: ticketError }, { error: taskError }, { data: owner }] = await Promise.all([
+    admin.from('incidencias').update({ estado: 'abierta' }).eq('id', id),
+    admin.from('tareas').update({ estado: 'abierta', fecha_cierre: null }).eq('incidencia_id', id),
+    admin.from('usuarios').select('nombre,email').eq('id', ticket.usuario_id).single(),
+  ])
+  if (ticketError) throw new Error(ticketError.message)
+  if (taskError) throw new Error(taskError.message)
 
-  const { data: owner } = await admin.from('usuarios').select('nombre,email').eq('id', ticket.usuario_id).single()
-  if (owner) await sendTicketReopenedUserEmail({ id, title: ticket.titulo, name: owner.nombre, email: owner.email })
   await notifyUsers(admin, [ticket.usuario_id], 'ticket', `#INC-${String(id).padStart(3, '0')} reabierto`, 'La incidencia ha sido reabierta.', `/tickets/${id}`)
+  if (owner) after(() => sendTicketReopenedUserEmail({ id, title: ticket.titulo, name: owner.nombre, email: owner.email }))
 
   revalidatePath(`/tickets/${id}`)
   revalidatePath('/tickets')
@@ -295,8 +243,10 @@ export async function destroyTicket(id: number) {
   const { data: relatedTasks } = await admin.from('tareas').select('id').eq('incidencia_id', id)
   const taskIds = (relatedTasks ?? []).map(x => x.id)
   if (taskIds.length) await admin.from('tarea_registros').delete().in('tarea_id', taskIds)
-  await admin.from('mensajes').delete().eq('incidencia_id', id)
-  await admin.from('tareas').update({ incidencia_id: null }).eq('incidencia_id', id)
+  await Promise.all([
+    admin.from('mensajes').delete().eq('incidencia_id', id),
+    admin.from('tareas').update({ incidencia_id: null }).eq('incidencia_id', id),
+  ])
   await admin.from('incidencias').delete().eq('id', id)
   revalidatePath('/tickets')
   revalidatePath('/papelera')
@@ -324,14 +274,8 @@ export async function createTask(formData: FormData) {
   if (profile.rol !== 'admin') return
   const name = String(formData.get('nombre') || '').trim()
   if (!name) return
-  await admin.from('tareas').insert({
-    nombre: name,
-    descripcion: String(formData.get('descripcion') || '').trim(),
-    incidencia_id: formData.get('incidencia_id') ? Number(formData.get('incidencia_id')) : null,
-    centro_coste_id: formData.get('centro_coste_id') ? Number(formData.get('centro_coste_id')) : null,
-    estado: 'abierta',
-    eliminado: false,
-  })
+  const { error } = await admin.from('tareas').insert({ nombre: name, descripcion: String(formData.get('descripcion') || '').trim(), incidencia_id: formData.get('incidencia_id') ? Number(formData.get('incidencia_id')) : null, centro_coste_id: formData.get('centro_coste_id') ? Number(formData.get('centro_coste_id')) : null, estado: 'abierta', eliminado: false })
+  if (error) throw new Error(error.message)
   revalidatePath('/tasker')
 }
 
@@ -339,21 +283,16 @@ export async function editTask(formData: FormData) {
   const { admin, profile } = await ctx()
   if (profile.rol !== 'admin') return
   const id = Number(formData.get('id'))
-  await admin.from('tareas').update({
-    nombre: String(formData.get('nombre') || '').trim(),
-    descripcion: String(formData.get('descripcion') || '').trim(),
-    incidencia_id: formData.get('incidencia_id') ? Number(formData.get('incidencia_id')) : null,
-    centro_coste_id: formData.get('centro_coste_id') ? Number(formData.get('centro_coste_id')) : null,
-  }).eq('id', id)
+  const { error } = await admin.from('tareas').update({ nombre: String(formData.get('nombre') || '').trim(), descripcion: String(formData.get('descripcion') || '').trim(), incidencia_id: formData.get('incidencia_id') ? Number(formData.get('incidencia_id')) : null, centro_coste_id: formData.get('centro_coste_id') ? Number(formData.get('centro_coste_id')) : null }).eq('id', id)
+  if (error) throw new Error(error.message)
   revalidatePath('/tasker')
 }
 
 export async function toggleTask(id: number, cerrar: boolean) {
   const { admin, profile } = await ctx()
   if (profile.rol !== 'admin') return
-  await admin.from('tareas').update(
-    cerrar ? { estado: 'cerrada', fecha_cierre: new Date().toISOString() } : { estado: 'abierta', fecha_cierre: null },
-  ).eq('id', id)
+  const { error } = await admin.from('tareas').update(cerrar ? { estado: 'cerrada', fecha_cierre: new Date().toISOString() } : { estado: 'abierta', fecha_cierre: null }).eq('id', id)
+  if (error) throw new Error(error.message)
   revalidatePath('/tasker')
 }
 
@@ -389,21 +328,16 @@ export async function logHours(formData: FormData) {
   const horas = Number(String(formData.get('horas') || '0').replace(',', '.'))
   const comentario = String(formData.get('comentario') || '').trim()
   if (tareaId <= 0 || horas <= 0 || !comentario) return
-  await admin.from('tarea_registros').insert({ tarea_id: tareaId, usuario_id: profile.id, horas, comentario })
+  const { error } = await admin.from('tarea_registros').insert({ tarea_id: tareaId, usuario_id: profile.id, horas, comentario })
+  if (error) throw new Error(error.message)
   revalidatePath('/tasker')
 }
 
 export async function createEquipment(formData: FormData) {
   const { admin, profile } = await ctx()
   if (!isStaff(profile.rol)) return
-  await admin.from('equipos').insert({
-    tipo: String(formData.get('tipo') || 'otro'),
-    marca: String(formData.get('marca') || '').trim(),
-    modelo: String(formData.get('modelo') || '').trim(),
-    identificador: String(formData.get('identificador') || '').trim(),
-    estado_equipo: 'en_stock',
-    observaciones: String(formData.get('observaciones') || '').trim(),
-  })
+  const { error } = await admin.from('equipos').insert({ tipo: String(formData.get('tipo') || 'otro'), marca: String(formData.get('marca') || '').trim(), modelo: String(formData.get('modelo') || '').trim(), identificador: String(formData.get('identificador') || '').trim(), estado_equipo: 'en_stock', observaciones: String(formData.get('observaciones') || '').trim() })
+  if (error) throw new Error(error.message)
   revalidatePath('/material')
 }
 
@@ -415,22 +349,10 @@ export async function assignEquipment(id: number, userId: number) {
     admin.from('usuarios').select('id,nombre,email,centro_coste_id').eq('id', userId).single(),
   ])
   if (!equipment || !user) return
-
-  await admin.from('equipos').update({
-    usuario_id: userId,
-    centro_coste_id: user.centro_coste_id || null,
-    estado_equipo: 'asignado',
-  }).eq('id', id)
-
-  await sendEquipmentAssignedUserEmail({
-    name: user.nombre,
-    email: user.email,
-    type: equipment.tipo,
-    brand: equipment.marca,
-    model: equipment.modelo,
-    identifier: equipment.identificador,
-  })
+  const { error } = await admin.from('equipos').update({ usuario_id: userId, centro_coste_id: user.centro_coste_id || null, estado_equipo: 'asignado' }).eq('id', id)
+  if (error) throw new Error(error.message)
   await notifyUsers(admin, [userId], 'material', 'Nuevo equipo asignado', `${equipment.marca} ${equipment.modelo}`, '/perfil')
+  after(() => sendEquipmentAssignedUserEmail({ name: user.nombre, email: user.email, type: equipment.tipo, brand: equipment.marca, model: equipment.modelo, identifier: equipment.identificador }))
   revalidatePath('/material')
   revalidatePath('/perfil')
 }
@@ -438,7 +360,8 @@ export async function assignEquipment(id: number, userId: number) {
 export async function releaseEquipment(id: number, state: 'en_stock' | 'reparacion' | 'baja' = 'en_stock') {
   const { admin, profile } = await ctx()
   if (!isStaff(profile.rol)) return
-  await admin.from('equipos').update({ usuario_id: null, centro_coste_id: null, estado_equipo: state }).eq('id', id)
+  const { error } = await admin.from('equipos').update({ usuario_id: null, centro_coste_id: null, estado_equipo: state }).eq('id', id)
+  if (error) throw new Error(error.message)
   revalidatePath('/material')
   revalidatePath('/perfil')
 }
@@ -447,24 +370,18 @@ export async function editEquipment(formData: FormData) {
   const { admin, profile } = await ctx()
   if (!isStaff(profile.rol)) return
   const id = Number(formData.get('id'))
-  await admin.from('equipos').update({
-    tipo: String(formData.get('tipo') || 'otro'),
-    marca: String(formData.get('marca') || '').trim(),
-    modelo: String(formData.get('modelo') || '').trim(),
-    identificador: String(formData.get('identificador') || '').trim(),
-    estado_equipo: String(formData.get('estado_equipo') || 'en_stock'),
-    observaciones: String(formData.get('observaciones') || '').trim(),
-  }).eq('id', id)
+  const { error } = await admin.from('equipos').update({ tipo: String(formData.get('tipo') || 'otro'), marca: String(formData.get('marca') || '').trim(), modelo: String(formData.get('modelo') || '').trim(), identificador: String(formData.get('identificador') || '').trim(), estado_equipo: String(formData.get('estado_equipo') || 'en_stock'), observaciones: String(formData.get('observaciones') || '').trim() }).eq('id', id)
+  if (error) throw new Error(error.message)
   revalidatePath('/material')
 }
 
 export async function deleteEquipment(id: number) {
   const { admin, profile } = await ctx()
   if (!isStaff(profile.rol)) return
-  await admin.from('equipos').delete().eq('id', id)
+  const { error } = await admin.from('equipos').delete().eq('id', id)
+  if (error) throw new Error(error.message)
   revalidatePath('/material')
 }
-
 
 export async function importUsersCsv(formData: FormData) {
   const { admin, profile } = await ctx()
@@ -477,60 +394,43 @@ export async function importUsersCsv(formData: FormData) {
 
   const rows = lines.slice(1).map(line => {
     const values = line.split(';').map(value => value.trim().replace(/^"|"$/g, ''))
-    return {
-      nombre: values[0] || '', email: (values[1] || '').toLowerCase(), centro: values[2] || '', puesto: values[3] || '',
-      departamento: values[4] || '', rol: values[5] || 'empleado', password: values[6] || '123456',
-      equipoTipo: (values[7] || '').toLowerCase(), equipoMarca: values[8] || '', equipoModelo: values[9] || '', equipoId: values[10] || '',
-    }
+    return { nombre: values[0] || '', email: (values[1] || '').toLowerCase(), centro: values[2] || '', puesto: values[3] || '', departamento: values[4] || '', rol: values[5] || 'empleado', password: values[6] || '123456', equipoTipo: (values[7] || '').toLowerCase(), equipoMarca: values[8] || '', equipoModelo: values[9] || '', equipoId: values[10] || '' }
   }).filter(row => row.nombre && row.email.includes('@'))
 
-  const { data: centers } = await admin.from('centros_coste').select('id,nombre')
-  const { data: existingAuth } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
-  let authUsers: User[] = existingAuth?.users ?? []
-  let imported = 0
-  let equipmentImported = 0
+  const [{ data: centers }, { data: existingAuth }] = await Promise.all([
+    admin.from('centros_coste').select('id,nombre'),
+    admin.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+  ])
+  const centerMap = new Map((centers ?? []).map(center => [center.nombre.trim().toLowerCase(), center.id]))
+  const authMap = new Map<string, User>((existingAuth?.users ?? []).flatMap(user => user.email ? [[user.email.toLowerCase(), user] as const] : []))
 
   for (const row of rows) {
-    let centerId: number | null = null
-    const center = centers?.find(c => c.nombre.trim().toLowerCase() === row.centro.toLowerCase())
-    if (center) centerId = center.id
-
-    let authUser = authUsers.find(user => user.email?.toLowerCase() === row.email)
+    const centerId = centerMap.get(row.centro.toLowerCase()) || null
+    let authUser = authMap.get(row.email)
     if (!authUser) {
-      const { data, error } = await admin.auth.admin.createUser({
-        email: row.email,
-        password: row.password || '123456',
-        email_confirm: true,
-        user_metadata: { name: row.nombre },
-      })
+      const { data, error } = await admin.auth.admin.createUser({ email: row.email, password: row.password || '123456', email_confirm: true, user_metadata: { name: row.nombre } })
       if (error || !data.user) throw new Error(`${row.email}: ${error?.message || 'No se pudo crear el usuario.'}`)
       authUser = data.user
-      authUsers.push(authUser)
-      imported += 1
+      authMap.set(row.email, authUser)
     }
 
     let profileRow = (await admin.from('usuarios').select('id').eq('email', row.email).maybeSingle()).data
+    const role = ['admin', 'controller', 'auditor', 'empleado'].includes(row.rol) ? row.rol : 'empleado'
     if (!profileRow) {
-      profileRow = (await admin.from('usuarios').insert({
-        auth_user_id: authUser.id, nombre: row.nombre, email: row.email, rol: ['admin','controller','auditor','empleado'].includes(row.rol) ? row.rol : 'empleado',
-        estado_cuenta: 'activo', centro_coste_id: centerId, puesto: row.puesto, departamento: row.departamento,
-      }).select('id').single()).data
+      profileRow = (await admin.from('usuarios').insert({ auth_user_id: authUser.id, nombre: row.nombre, email: row.email, rol: role, estado_cuenta: 'activo', centro_coste_id: centerId, puesto: row.puesto, departamento: row.departamento }).select('id').single()).data
     } else {
-      await admin.from('usuarios').update({ auth_user_id: authUser.id, nombre: row.nombre, rol: ['admin','controller','auditor','empleado'].includes(row.rol) ? row.rol : 'empleado', estado_cuenta: 'activo', centro_coste_id: centerId, puesto: row.puesto, departamento: row.departamento }).eq('id', profileRow.id)
+      await admin.from('usuarios').update({ auth_user_id: authUser.id, nombre: row.nombre, rol: role, estado_cuenta: 'activo', centro_coste_id: centerId, puesto: row.puesto, departamento: row.departamento }).eq('id', profileRow.id)
     }
 
     if (profileRow && row.equipoTipo && row.equipoMarca && row.equipoId) {
-      const allowed = ['telefono','movil','portatil','periferico','otro']
-      const tipo = allowed.includes(row.equipoTipo) ? row.equipoTipo : 'otro'
+      const tipo = ['telefono', 'movil', 'portatil', 'periferico', 'otro'].includes(row.equipoTipo) ? row.equipoTipo : 'otro'
       const exists = await admin.from('equipos').select('id').eq('identificador', row.equipoId).maybeSingle()
-      if (!exists.data) {
-        const { error } = await admin.from('equipos').insert({ tipo, marca: row.equipoMarca, modelo: row.equipoModelo || '-', identificador: row.equipoId, usuario_id: profileRow.id, centro_coste_id: centerId, estado_equipo: 'asignado' })
-        if (!error) equipmentImported += 1
-      }
+      if (!exists.data) await admin.from('equipos').insert({ tipo, marca: row.equipoMarca, modelo: row.equipoModelo || '-', identificador: row.equipoId, usuario_id: profileRow.id, centro_coste_id: centerId, estado_equipo: 'asignado' })
     }
   }
 
-  revalidatePath('/usuarios'); revalidatePath('/material')
+  revalidatePath('/usuarios')
+  revalidatePath('/material')
 }
 
 export async function approveUser(id: number) {
@@ -554,7 +454,7 @@ export async function updateUser(formData: FormData) {
   if (profile.rol !== 'admin') return
   const id = Number(formData.get('id'))
   const name = String(formData.get('nombre') || '').trim()
-  const email = String(formData.get('email') || '').trim()
+  const email = String(formData.get('email') || '').trim().toLowerCase()
   const role = String(formData.get('rol') || 'empleado')
   const center = formData.get('centro_coste_id') ? Number(formData.get('centro_coste_id')) : null
   const puesto = String(formData.get('puesto') || '').trim()
@@ -566,7 +466,8 @@ export async function updateUser(formData: FormData) {
     const { error } = await admin.auth.admin.updateUserById(row.auth_user_id, { email })
     if (error) throw new Error(error.message)
   }
-  await admin.from('usuarios').update({ nombre: name, email, rol: role, centro_coste_id: center, puesto, departamento }).eq('id', id)
+  const { error } = await admin.from('usuarios').update({ nombre: name, email, rol: role, centro_coste_id: center, puesto, departamento }).eq('id', id)
+  if (error) throw new Error(error.message)
   revalidatePath('/usuarios')
   revalidatePath('/perfil')
 }
@@ -585,16 +486,7 @@ export async function createUserManual(formData: FormData) {
 
   const { data: authUser, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { name } })
   if (error || !authUser.user) throw new Error(error?.message || 'No se pudo crear el usuario.')
-  const { error: profileError } = await admin.from('usuarios').upsert({
-    auth_user_id: authUser.user.id,
-    nombre: name,
-    email,
-    rol: ['admin', 'controller', 'auditor', 'empleado'].includes(role) ? role : 'empleado',
-    estado_cuenta: 'activo',
-    centro_coste_id: center,
-    puesto,
-    departamento,
-  }, { onConflict: 'email' })
+  const { error: profileError } = await admin.from('usuarios').upsert({ auth_user_id: authUser.user.id, nombre: name, email, rol: ['admin', 'controller', 'auditor', 'empleado'].includes(role) ? role : 'empleado', estado_cuenta: 'activo', centro_coste_id: center, puesto, departamento }, { onConflict: 'email' })
   if (profileError) throw new Error(profileError.message)
   revalidatePath('/usuarios')
 }
@@ -604,10 +496,7 @@ export async function sendUserInvitation(id: number) {
   if (profile.rol !== 'admin') return
   const { data: user } = await admin.from('usuarios').select('nombre,email,rol').eq('id', id).single()
   if (!user) return
-  const { data: invited, error } = await admin.auth.admin.inviteUserByEmail(user.email, {
-    data: { name: user.nombre },
-    redirectTo: `${siteUrl()}/auth/callback?next=/pendiente`,
-  })
+  const { data: invited, error } = await admin.auth.admin.inviteUserByEmail(user.email, { data: { name: user.nombre }, redirectTo: `${siteUrl()}/auth/callback?next=/pendiente` })
   if (error) throw new Error(error.message)
   if (invited.user) await admin.from('usuarios').update({ auth_user_id: invited.user.id, rol: user.rol }).eq('id', id)
   revalidatePath('/usuarios')
@@ -620,7 +509,7 @@ export async function inviteExistingUser(id: number) {
 export async function updateProfile(formData: FormData) {
   const { admin, supabase, profile } = await ctx()
   const name = String(formData.get('nombre') || '').trim()
-  const email = String(formData.get('email') || '').trim()
+  const email = String(formData.get('email') || '').trim().toLowerCase()
   if (!name || !email) return
 
   await admin.from('usuarios').update({ nombre: name }).eq('id', profile.id)
@@ -647,5 +536,5 @@ export async function notifyRegistrationVerified(name: string, email: string) {
   const { admin, profile } = await ctx()
   if (profile.rol !== 'admin') return
   const { data } = await admin.from('usuarios').select('id').eq('email', email).single()
-  if (data) await sendRegistrationVerifiedAdminEmail({ name, email })
+  if (data) after(() => sendRegistrationVerifiedAdminEmail({ name, email }))
 }

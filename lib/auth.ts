@@ -2,11 +2,7 @@ import { cache } from 'react'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 
-export type AppRole =
-  | 'admin'
-  | 'controller'
-  | 'empleado'
-  | 'auditor'
+export type AppRole = 'admin' | 'controller' | 'empleado' | 'auditor'
 
 export type UserProfile = {
   id: number
@@ -21,58 +17,50 @@ export type UserProfile = {
   estado_material: string | null
 }
 
+type AuthIdentity = {
+  id: string
+  email?: string
+}
+
 /**
- * Obtiene el usuario autenticado y su perfil.
- *
- * cache() evita repetir la misma consulta cuando varios
- * Server Components necesitan el contexto del usuario
- * durante la misma navegación/renderizado.
+ * Verifica la identidad con el JWT ya validado por el proxy.
+ * getClaims evita el getUser remoto para cada navegación cuando
+ * el proyecto usa firmas JWT asimétricas.
  */
 export const getContext = cache(async () => {
   const supabase = await createClient()
+  const { data, error } = await supabase.auth.getClaims()
 
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser()
-
-  if (userError || !user) {
+  if (error || !data?.claims?.sub || typeof data.claims.sub !== 'string') {
     return null
+  }
+
+  const identity: AuthIdentity = {
+    id: data.claims.sub,
+    email: typeof data.claims.email === 'string' ? data.claims.email : undefined,
   }
 
   const { data: profile, error: profileError } = await supabase
     .from('usuarios')
-    .select(
-      'id,auth_user_id,nombre,email,rol,estado_cuenta,centro_coste_id,puesto,departamento,estado_material',
-    )
-    .eq('auth_user_id', user.id)
+    .select('id,auth_user_id,nombre,email,rol,estado_cuenta,centro_coste_id,puesto,departamento,estado_material')
+    .eq('auth_user_id', identity.id)
     .maybeSingle()
 
   if (profileError || !profile) {
-    if (profileError) {
-      console.error(
-        'Error obteniendo perfil de usuario:',
-        profileError,
-      )
-    }
-
     return {
       supabase,
-      user,
+      user: identity,
       profile: null,
     }
   }
 
   return {
     supabase,
-    user,
+    user: identity,
     profile: profile as UserProfile,
   }
 })
 
-/**
- * Requiere un usuario autenticado y con cuenta activa.
- */
 export const requireUser = cache(async () => {
   const ctx = await getContext()
 
@@ -87,9 +75,6 @@ export const requireUser = cache(async () => {
   return ctx
 })
 
-/**
- * Requiere que el usuario tenga uno de los roles indicados.
- */
 export const requireRole = cache(async (roles: AppRole[]) => {
   const ctx = await requireUser()
 

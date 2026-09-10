@@ -17,6 +17,7 @@ type EmailEvent =
   | 'equipment_assigned_user'
 
 let cachedTransport: Transporter | null = null
+let cachedAdmin: ReturnType<typeof createAdminClient> | null = null
 
 function transport() {
   if (cachedTransport) return cachedTransport
@@ -29,6 +30,11 @@ function transport() {
   return cachedTransport
 }
 
+function adminClient() {
+  if (!cachedAdmin) cachedAdmin = createAdminClient()
+  return cachedAdmin
+}
+
 function sender() {
   return {
     name: process.env.MAIL_FROM_NAME || 'Soporte IT REBIOS',
@@ -37,8 +43,7 @@ function sender() {
 }
 
 async function logEmail(event: EmailEvent, to: string, subject: string, status: 'enviado' | 'fallido', entity?: { type: string; id?: number }, error?: string) {
-  const admin = createAdminClient()
-  await admin.from('email_logs').insert({
+  await adminClient().from('email_logs').insert({
     evento: event,
     destinatario: to,
     asunto: subject,
@@ -63,41 +68,20 @@ async function send(event: EmailEvent, to: string, template: { subject: string; 
     return true
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    await logEmail(event, to, template.subject, 'fallido', entity, message)
+    try {
+      await logEmail(event, to, template.subject, 'fallido', entity, message)
+    } catch {
+      // El logging no debe ocultar el error SMTP original.
+    }
     return false
   }
 }
 
-// Este módulo es exclusivamente para correos operativos del portal.
-// Verificación, cambio/recuperación de contraseña y cambio de email pertenecen a Supabase Auth.
-export async function sendRegistrationVerifiedAdminEmail(p: { name: string; email: string }) {
-  return send('registration_verified_admin', IT_EMAIL, templates.registrationVerifiedAdminEmail({ ...p, url: `${SITE_URL}/usuarios` }), { type: 'usuario' })
-}
-
-export async function sendTicketCreatedAdminEmail(p: { id: number; title: string; description: string; userName: string }) {
-  return send('ticket_created_admin', IT_EMAIL, templates.ticketCreatedAdminEmail({ ...p, url: `${SITE_URL}/tickets/${p.id}` }), { type: 'incidencia', id: p.id })
-}
-
-export async function sendTicketCreatedUserEmail(p: { id: number; title: string; description: string; name: string; email: string }) {
-  return send('ticket_created_user', p.email, templates.ticketCreatedUserEmail({ ...p, url: `${SITE_URL}/tickets/${p.id}` }), { type: 'incidencia', id: p.id })
-}
-
-export async function sendTicketInProcessUserEmail(p: { id: number; title: string; name: string; email: string }) {
-  return send('ticket_in_process_user', p.email, templates.ticketInProcessUserEmail({ ...p, url: `${SITE_URL}/tickets/${p.id}` }), { type: 'incidencia', id: p.id })
-}
-
-export async function sendTicketMessageEmail(p: { id: number; title: string; senderName: string; message: string; email: string }) {
-  return send('ticket_message', p.email, templates.ticketMessageEmail({ ...p, url: `${SITE_URL}/tickets/${p.id}` }), { type: 'incidencia', id: p.id })
-}
-
-export async function sendTicketClosedUserEmail(p: { id: number; title: string; name: string; email: string }) {
-  return send('ticket_closed_user', p.email, templates.ticketClosedUserEmail({ ...p, url: `${SITE_URL}/tickets/${p.id}` }), { type: 'incidencia', id: p.id })
-}
-
-export async function sendTicketReopenedUserEmail(p: { id: number; title: string; name: string; email: string }) {
-  return send('ticket_reopened_user', p.email, templates.ticketReopenedUserEmail({ ...p, url: `${SITE_URL}/tickets/${p.id}` }), { type: 'incidencia', id: p.id })
-}
-
-export async function sendEquipmentAssignedUserEmail(p: { name: string; email: string; type: string; brand: string; model: string; identifier: string }) {
-  return send('equipment_assigned_user', p.email, templates.equipmentAssignedUserEmail({ ...p, url: `${SITE_URL}/perfil` }), { type: 'equipo' })
-}
+export async function sendRegistrationVerifiedAdminEmail(p: { name: string; email: string }) { return send('registration_verified_admin', IT_EMAIL, templates.registrationVerifiedAdminEmail({ ...p, url: `${SITE_URL}/usuarios` }), { type: 'usuario' }) }
+export async function sendTicketCreatedAdminEmail(p: { id: number; title: string; description: string; userName: string }) { return send('ticket_created_admin', IT_EMAIL, templates.ticketCreatedAdminEmail({ ...p, url: `${SITE_URL}/tickets/${p.id}` }), { type: 'incidencia', id: p.id }) }
+export async function sendTicketCreatedUserEmail(p: { id: number; title: string; description: string; name: string; email: string }) { return send('ticket_created_user', p.email, templates.ticketCreatedUserEmail({ ...p, url: `${SITE_URL}/tickets/${p.id}` }), { type: 'incidencia', id: p.id }) }
+export async function sendTicketInProcessUserEmail(p: { id: number; title: string; name: string; email: string }) { return send('ticket_in_process_user', p.email, templates.ticketInProcessUserEmail({ ...p, url: `${SITE_URL}/tickets/${p.id}` }), { type: 'incidencia', id: p.id }) }
+export async function sendTicketMessageEmail(p: { id: number; title: string; senderName: string; message: string; email: string }) { return send('ticket_message', p.email, templates.ticketMessageEmail({ ...p, url: `${SITE_URL}/tickets/${p.id}` }), { type: 'incidencia', id: p.id }) }
+export async function sendTicketClosedUserEmail(p: { id: number; title: string; name: string; email: string }) { return send('ticket_closed_user', p.email, templates.ticketClosedUserEmail({ ...p, url: `${SITE_URL}/tickets/${p.id}` }), { type: 'incidencia', id: p.id }) }
+export async function sendTicketReopenedUserEmail(p: { id: number; title: string; name: string; email: string }) { return send('ticket_reopened_user', p.email, templates.ticketReopenedUserEmail({ ...p, url: `${SITE_URL}/tickets/${p.id}` }), { type: 'incidencia', id: p.id }) }
+export async function sendEquipmentAssignedUserEmail(p: { name: string; email: string; type: string; brand: string; model: string; identifier: string }) { return send('equipment_assigned_user', p.email, templates.equipmentAssignedUserEmail({ ...p, url: `${SITE_URL}/perfil` }), { type: 'equipo' }) }
