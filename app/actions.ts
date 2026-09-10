@@ -613,6 +613,10 @@ export async function sendUserInvitation(id: number) {
   revalidatePath('/usuarios')
 }
 
+export async function inviteExistingUser(id: number) {
+  return sendUserInvitation(id)
+}
+
 export async function updateProfile(formData: FormData) {
   const { admin, supabase, profile } = await ctx()
   const name = String(formData.get('nombre') || '').trim()
