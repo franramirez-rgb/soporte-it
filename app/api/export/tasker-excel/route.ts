@@ -85,7 +85,7 @@ export async function GET(request: Request) {
     title.alignment = { horizontal: 'left', vertical: 'middle' }
     sheet.getRow(1).height = 30
     sheet.getCell('A2').value = 'Periodo'; sheet.getCell('B2').value = period;
-    for (const cell of ['A2','B2','D2','E2','F2','G2']) {
+    for (const cell of ['A2','B2']) {
       sheet.getCell(cell).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9EEF5' } }
       sheet.getCell(cell).border = { top: { style: 'thin', color: { argb: 'FFD0D7DE' } }, bottom: { style: 'thin', color: { argb: 'FFD0D7DE' } }, left: { style: 'thin', color: { argb: 'FFD0D7DE' } }, right: { style: 'thin', color: { argb: 'FFD0D7DE' } } }
       sheet.getCell(cell).alignment = { vertical: 'middle' }
