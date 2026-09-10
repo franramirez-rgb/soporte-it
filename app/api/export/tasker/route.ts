@@ -203,14 +203,12 @@ export async function GET(request: Request) {
     return Boolean(closedInCycle || hasHoursInCycle)
   })
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
   const hoursByCenter = new Map<string, number>()
   let totalHours = 0
 
   for (const task of rows) {
     const hours = (task.tarea_registros ?? []).filter((record: any) => record.fecha_creacion >= startDate.toISOString() && record.fecha_creacion < endExclusive.toISOString()).reduce((sum: number, record: any) => sum + Number(record.horas), 0)
-    const center = task.centros?.nombre || 'Sin Asignar'
+    const center = task.centros?.[0]?.nombre || 'Sin Asignar'
     totalHours += hours
     hoursByCenter.set(center, (hoursByCenter.get(center) || 0) + hours)
   }
@@ -237,11 +235,11 @@ export async function GET(request: Request) {
   let rowNumber = 5
   for (const task of rows) {
     const records = (task.tarea_registros ?? []).filter((record: any) => record.fecha_creacion >= startDate.toISOString() && record.fecha_creacion < endExclusive.toISOString())
-    const creator = task.incidencias?.usuarios?.nombre || 'Tarea manual'
-    const center = task.centros?.nombre || 'Sin Asignar'
+    const creator = task.incidencias?.[0]?.usuarios?.[0]?.nombre || 'Tarea manual'
+    const center = task.centros?.[0]?.nombre || 'Sin Asignar'
     const hours = records.reduce((sum: number, record: any) => sum + Number(record.horas), 0)
     const work = records.length
-      ? records.map((record: any) => `${new Date(record.fecha_creacion).toLocaleDateString('es-ES')} · ${record.usuarios?.nombre || `Usuario #${record.usuario_id}`} · ${Number(record.horas).toFixed(2)} h · ${record.comentario}`).join(' | ')
+      ? records.map((record: any) => `${new Date(record.fecha_creacion).toLocaleDateString('es-ES')} · ${record.usuarios?.[0]?.nombre || `Usuario #${record.usuario_id}`} · ${Number(record.horas).toFixed(2)} h · ${record.comentario}`).join(' | ')
       : 'Sin registros detallados'
 
     detailRows.push(`<row r="${rowNumber}">${inlineCell(`A${rowNumber}`, task.fecha_creacion ? new Date(task.fecha_creacion).toLocaleString('es-ES') : '-')}${inlineCell(`B${rowNumber}`, task.fecha_cierre ? new Date(task.fecha_cierre).toLocaleString('es-ES') : '-')}${inlineCell(`C${rowNumber}`, task.estado)}${inlineCell(`D${rowNumber}`, task.nombre)}${inlineCell(`E${rowNumber}`, task.descripcion || '')}${inlineCell(`F${rowNumber}`, center)}${inlineCell(`G${rowNumber}`, creator)}${numberCell(`H${rowNumber}`, hours)}${inlineCell(`I${rowNumber}`, work)}</row>`)

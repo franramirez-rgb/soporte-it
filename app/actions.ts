@@ -297,7 +297,7 @@ export async function createTask(formData: FormData) {
       .select('usuario_id,usuarios:usuario_id(centro_coste_id)')
       .eq('id', incidenceId)
       .single()
-    centerId = incidence?.usuarios?.centro_coste_id ?? null
+    centerId = incidence?.usuarios?.[0]?.centro_coste_id ?? null
   }
 
   const { error } = await admin.from('tareas').insert({
@@ -324,13 +324,14 @@ export async function editTask(formData: FormData) {
   // inicializar las tareas automáticas creadas desde una incidencia, pero no
   // debe sobrescribir una modificación posterior.
 
-  const { error } = await admin.from('tareas').update({
+  const { data: updatedTask, error } = await admin.from('tareas').update({
     nombre: String(formData.get('nombre') || '').trim(),
     descripcion: String(formData.get('descripcion') || '').trim(),
     incidencia_id: incidenceId,
     centro_coste_id: centerId,
-  }).eq('id', id)
+  }).eq('id', id).select('id,centro_coste_id').single()
   if (error) throw new Error(error.message)
+  if (!updatedTask) throw new Error('No se pudo actualizar la tarea.')
   revalidatePath('/tasker')
   revalidatePath(`/tasker/${id}`)
 }
