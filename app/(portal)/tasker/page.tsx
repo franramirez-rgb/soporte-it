@@ -43,7 +43,6 @@ export default async function Tasker({
   const centers = centersRaw ?? []
   const editingTask = editingRaw ?? null
 
-  const taskIds = tasks.map(task => task.id)
   const incidentIds = tasks.flatMap(task => task.incidencia_id ? [task.incidencia_id] : [])
 
   const [{ data: incidentsRaw }, { data: regsRaw }, { data: editIncidentsRaw }] = await Promise.all([
@@ -93,6 +92,7 @@ export default async function Tasker({
     if (editar) q.set('editar', String(editar))
     return `/tasker?${q.toString()}`
   }
+  const archiveHref = `/tasker/archivo?month=${encodeURIComponent(month)}&page=1`
 
   return (
     <div className="stack">
@@ -101,7 +101,7 @@ export default async function Tasker({
         <div className="toolbar-right">
           <div className="row-actions">
             <Link className={`btn ${vista === 'activos' ? 'btn-primary' : 'btn-secondary'}`} href={query(1)}>Activas</Link>
-            <Link className={`btn ${vista === 'archivo' ? 'btn-primary' : 'btn-secondary'}`} href={query(1)}>Archivo</Link>
+            <Link className={`btn ${vista === 'archivo' ? 'btn-primary' : 'btn-secondary'}`} href={archiveHref}>Archivo</Link>
           </div>
           <form method="GET" className="row-actions"><input type="hidden" name="vista" value={vista} /><input className="input compact-input" type="month" name="month" defaultValue={month} /><button className="btn btn-secondary">Aplicar</button></form>
           <a className="btn btn-secondary" href={`/api/export/tasker?month=${month}`}>Exportar Excel</a>
