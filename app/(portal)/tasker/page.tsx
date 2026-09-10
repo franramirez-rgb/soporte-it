@@ -5,12 +5,13 @@ import { requireRole } from '@/lib/auth'
 export default async function Tasker({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string; page?: string; editar?: string }>
+  searchParams: Promise<{ month?: string; page?: string; editar?: string; vista?: string }>
 }) {
   const params = await searchParams
   const month = /^\d{4}-\d{2}$/.test(params.month || '') ? params.month! : new Date().toISOString().slice(0, 7)
   const page = Math.max(1, Number(params.page || 1))
   const editId = Math.max(0, Number(params.editar || 0))
+  const vista = params.vista === 'archivo' ? 'archivo' : 'activos'
   const pageSize = 25
 
   const startDate = new Date(`${month}-01T00:00:00Z`)
@@ -27,7 +28,11 @@ export default async function Tasker({
     { data: regsRaw },
     { data: editingRaw },
   ] = await Promise.all([
-    supabase.from('tareas').select('id,nombre,descripcion,incidencia_id,estado,fecha_creacion,fecha_cierre,centro_coste_id,centros:centro_coste_id(nombre)', { count: 'exact' }).eq('eliminado', false).order('fecha_creacion', { ascending: false }).range((page - 1) * pageSize, page * pageSize - 1),
+    (() => {
+      let query = supabase.from('tareas').select('id,nombre,descripcion,incidencia_id,estado,fecha_creacion,fecha_cierre,centro_coste_id,centros:centro_coste_id(nombre)', { count: 'exact' }).eq('eliminado', false)
+      query = vista === 'archivo' ? query.eq('estado', 'cerrada') : query.neq('estado', 'cerrada')
+      return query.order('fecha_creacion', { ascending: false }).range((page - 1) * pageSize, page * pageSize - 1)
+    })(),
     supabase.from('tareas').select('id,centro_coste_id').eq('eliminado', false),
     supabase.from('centros_coste').select('id,nombre').order('nombre'),
     isAdmin ? supabase.from('incidencias').select('id,titulo').eq('eliminado', false).order('id', { ascending: false }) : Promise.resolve({ data: [] as Array<{ id: number; titulo: string }> }),
@@ -55,7 +60,7 @@ export default async function Tasker({
   const totalHours = regs.reduce((sum, row) => sum + Number(row.horas), 0)
   const totalPages = Math.max(1, Math.ceil((count || 0) / pageSize))
   const query = (nextPage: number, editar?: number) => {
-    const q = new URLSearchParams({ month, page: String(nextPage) })
+    const q = new URLSearchParams({ month, page: String(nextPage), vista })
     if (editar) q.set('editar', String(editar))
     return `/tasker?${q.toString()}`
   }
@@ -63,9 +68,13 @@ export default async function Tasker({
   return (
     <div className="stack">
       <div className="hero">
-        <div><h1>Tasker</h1><p>Planificación y horas por centro de coste.</p></div>
+        <div><h1>Tasker</h1><p>{vista === 'archivo' ? 'Tareas cerradas archivadas.' : 'Tareas activas y horas por centro de coste.'}</p></div>
         <div className="toolbar-right">
-          <form method="GET" className="row-actions"><input className="input compact-input" type="month" name="month" defaultValue={month} /><button className="btn btn-secondary">Aplicar</button></form>
+          <div className="row-actions">
+            <Link className={`btn ${vista === 'activos' ? 'btn-primary' : 'btn-secondary'}`} href={query(1)}>Activas</Link>
+            <Link className={`btn ${vista === 'archivo' ? 'btn-primary' : 'btn-secondary'}`} href={query(1)}>Archivo</Link>
+          </div>
+          <form method="GET" className="row-actions"><input type="hidden" name="vista" value={vista} /><input className="input compact-input" type="month" name="month" defaultValue={month} /><button className="btn btn-secondary">Aplicar</button></form>
           <a className="btn btn-secondary" href={`/api/export/tasker?month=${month}`}>Exportar</a>
         </div>
       </div>
