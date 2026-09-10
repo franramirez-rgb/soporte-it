@@ -7,6 +7,7 @@ export const dynamic = 'force-dynamic'
 
 const NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
 const RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
+const DOC_RELS_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 const CT_NS = 'http://schemas.openxmlformats.org/package/2006/content-types'
 
 function xmlEscape(value: unknown) {
@@ -58,9 +59,9 @@ function zipStore(files: Array<{ name: string; data: Buffer }>) {
 }
 
 function workbookFiles(sheetXml: { sheet1: string; sheet2: string }) {
-  const workbook = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="${NS}" xmlns:r="${RELS_NS}"><sheets><sheet name="Tareas cerradas" sheetId="1" r:id="rId1"/><sheet name="Resumen centros" sheetId="2" r:id="rId2"/></sheets></workbook>`
-  const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${RELS_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`
-  const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${RELS_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`
+  const workbook = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="${NS}" xmlns:r="${DOC_RELS_NS}"><sheets><sheet name="Tareas cerradas" sheetId="1" r:id="rId1"/><sheet name="Resumen centros" sheetId="2" r:id="rId2"/></sheets></workbook>`
+  const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${RELS_NS}"><Relationship Id="rId1" Type="${DOC_RELS_NS}/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="${DOC_RELS_NS}/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="${DOC_RELS_NS}/styles" Target="styles.xml"/></Relationships>`
+  const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${RELS_NS}"><Relationship Id="rId1" Type="${DOC_RELS_NS}/officeDocument" Target="xl/workbook.xml"/></Relationships>`
   const types = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="${CT_NS}"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`
   return [
     {name:'[Content_Types].xml',data:Buffer.from(types)}, {name:'_rels/.rels',data:Buffer.from(rootRels)}, {name:'xl/workbook.xml',data:Buffer.from(workbook)}, {name:'xl/_rels/workbook.xml.rels',data:Buffer.from(workbookRels)}, {name:'xl/styles.xml',data:Buffer.from(stylesXml())}, {name:'xl/worksheets/sheet1.xml',data:Buffer.from(sheetXml.sheet1)}, {name:'xl/worksheets/sheet2.xml',data:Buffer.from(sheetXml.sheet2)}
@@ -101,7 +102,7 @@ export async function GET(request: Request) {
     let rowNum=5
     for(const x of details){
       const base=[new Date(x.task.fecha_creacion).toLocaleDateString('es-ES',{timeZone:'Europe/Madrid'}),x.task.nombre,x.creator?.nombre||'Sin asignar',x.centerName,x.hours,x.incident?.titulo||x.task.descripcion||'']
-      x.taskRecords.forEach((r,idx)=>{const taskHours=idx===0?x.hours:''; const vals=[base[0],base[1],base[2],base[3],taskHours,base[5],new Date(r.fecha_creacion).toLocaleDateString('es-ES',{timeZone:'Europe/Madrid'}),userById.get(r.usuario_id)||`Usuario #${r.usuario_id}`,Number(r.horas),r.comentario||'Sin comentario']; rowsXml.push(`<row r="${rowNum}">${vals.map((v,i)=>i===4||i===8?numberCell(`${colLetter(i+1)}${rowNum}`,Number(v),4):inlineCell(`${colLetter(i+1)}${rowNum}`,v)).join('')}</row>`); rowNum++})
+      x.taskRecords.forEach((r,idx)=>{const taskHours=idx===0?x.hours:null; const vals=[base[0],base[1],base[2],base[3],taskHours,base[5],new Date(r.fecha_creacion).toLocaleDateString('es-ES',{timeZone:'Europe/Madrid'}),userById.get(r.usuario_id)||`Usuario #${r.usuario_id}`,Number(r.horas),r.comentario||'Sin comentario']; rowsXml.push(`<row r="${rowNum}">${vals.map((v,i)=>i===4&&v!==null?numberCell(`${colLetter(i+1)}${rowNum}`,Number(v),4):i===8?numberCell(`${colLetter(i+1)}${rowNum}`,Number(v),4):inlineCell(`${colLetter(i+1)}${rowNum}`,v)).join('')}</row>`); rowNum++})
     }
     rowsXml.push(`<row r="${rowNum+1}">${inlineCell(`A${rowNum+1}`,'TOTAL',3)}${numberCell(`E${rowNum+1}`,totalHours,4)}</row>`)
     const sheet1=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="${NS}"><sheetViews><sheetView workbookViewId="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${[18,32,24,24,16,36,20,24,16,55].map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('')}</cols><sheetData>${rowsXml.join('')}</sheetData><autoFilter ref="A4:J${rowNum-1}"/></worksheet>`
