@@ -66,7 +66,6 @@ export default async function Tickets({ searchParams }: { searchParams: Promise<
     {vista === 'activos' && <div id="nuevo" className="card pad">
       <h2 style={{ marginTop: 0 }}>Nueva incidencia</h2>
       <form action={createTicket} className="form-grid" encType="multipart/form-data">
-        <label>Título<input className="input" name="titulo" required /></label>
         {profile.rol === 'admin' && <label>Usuario<select className="input" name="autor_id" defaultValue=""><option value="">Yo</option>{users.map(u => <option key={u.id} value={u.id}>{u.nombre} · {u.email}</option>)}</select></label>}
         <label className="full">Descripción<textarea className="input" name="descripcion" rows={5} required /></label>
         <label>Adjunto (opcional)<input className="input" type="file" name="adjunto" accept="image/jpeg,image/png,image/gif,application/pdf" /></label>
@@ -82,7 +81,7 @@ export default async function Tickets({ searchParams }: { searchParams: Promise<
             {tickets.map((t: any) => <tr key={t.id}>
               <td><strong>#INC-{String(t.id).padStart(3, '0')}</strong></td>
               <td><strong>{t.titulo}</strong><div className="small muted">{String(t.descripcion || '').slice(0, 120)}</div></td>
-              <td><strong>{t.usuarios?.[0]?.nombre || '—'}</strong></td>
+              <td><strong>{t.usuarios?.nombre || '—'}</strong></td>
               <td>{new Date(t.fecha_creacion).toLocaleString('es-ES')}</td>
               <td><span className={`badge ${t.estado === 'abierta' ? 'red' : t.estado === 'en_proceso' ? 'amber' : 'green'}`}>{String(t.estado).replace('_', ' ')}</span></td>
               <td><div className="row-actions"><Link className="btn btn-secondary" href={`/tickets/${t.id}`}>Ver</Link>{vista === 'activos' && profile.rol === 'admin' && <form action={deleteTicket.bind(null, t.id)}><button className="btn btn-danger">Papelera</button></form>}</div></td>

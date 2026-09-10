@@ -17,6 +17,7 @@ export default async function Tasker({
   const startDate = new Date(`${month}-01T00:00:00Z`)
   const endDate = new Date(startDate)
   endDate.setUTCMonth(endDate.getUTCMonth() + 1)
+
   const { supabase, profile } = await requireRole(['admin', 'auditor'])
   const isAdmin = profile.rol === 'admin'
 
@@ -152,8 +153,8 @@ export default async function Tasker({
                     <div className="small muted truncate">{task.descripcion}</div>
                   </td>
                   <td>{task.incidencia_id ? `#INC-${String(task.incidencia_id).padStart(3, '0')}` : '—'}</td>
-                  <td>{task.incidencias?.[0]?.usuarios?.[0]?.nombre || '—'}</td>
-                  <td>{task.centros?.[0]?.nombre || 'Sin asignar'}</td>
+                  <td>{task.incidencias?.usuarios?.nombre || '—'}</td>
+                  <td>{task.centros?.nombre || 'Sin asignar'}</td>
                   <td><strong>{(hoursByTask.get(task.id) || 0).toFixed(2)} h</strong></td>
                   <td><span className={`badge ${task.estado === 'cerrada' ? 'green' : 'blue'}`}>{task.estado}</span></td>
                   <td>
