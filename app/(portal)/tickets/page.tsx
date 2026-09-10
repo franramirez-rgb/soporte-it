@@ -1,11 +1,12 @@
 import Link from 'next/link'
 import { createTicket, deleteTicket } from '@/app/actions'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { requireUser } from '@/lib/auth'
-import { oneRelation } from '@/lib/supabase/relations'
 
 export default async function Tickets({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams
-  const { supabase, profile } = await requireUser()
+  const { profile } = await requireUser()
+  const supabase = createAdminClient()
   const vista = params.vista === 'archivo' ? 'archivo' : 'activos'
   const search = typeof params.q === 'string' ? params.q.trim() : ''
   const pagina = Math.max(1, Number(params.pagina || 1))
@@ -15,7 +16,7 @@ export default async function Tickets({ searchParams }: { searchParams: Promise<
 
   let query = supabase
     .from('incidencias')
-    .select('id,titulo,descripcion,estado,fecha_creacion,usuario_id,usuarios:usuario_id(nombre)', { count: 'exact' })
+    .select('id,titulo,descripcion,estado,fecha_creacion,usuario_id', { count: 'exact' })
     .eq('eliminado', false)
 
   query = vista === 'archivo'
@@ -29,6 +30,9 @@ export default async function Tickets({ searchParams }: { searchParams: Promise<
     .range(from, to)
 
   const tickets = ticketsRaw ?? []
+  const creatorIds = [...new Set(tickets.map(ticket => ticket.usuario_id))]
+  const { data: creatorsRaw } = creatorIds.length ? await supabase.from('usuarios').select('id,nombre').in('id', creatorIds) : { data: [] as Array<{id:number; nombre:string}> }
+  const creatorById = new Map((creatorsRaw ?? []).map(user => [user.id, user.nombre]))
   const totalPages = Math.max(1, Math.ceil((count || 0) / pageSize))
   const users = profile.rol === 'admin'
     ? ((await supabase.from('usuarios').select('id,nombre,email').eq('estado_cuenta', 'activo').order('nombre')).data ?? [])
@@ -82,7 +86,7 @@ export default async function Tickets({ searchParams }: { searchParams: Promise<
             {tickets.map((t: any) => <tr key={t.id}>
               <td><strong>#INC-{String(t.id).padStart(3, '0')}</strong></td>
               <td><strong>{t.titulo}</strong><div className="small muted">{String(t.descripcion || '').slice(0, 120)}</div></td>
-              <td><strong>{oneRelation(t.usuarios)?.nombre || '—'}</strong></td>
+              <td><strong>{creatorById.get(t.usuario_id) || '—'}</strong></td>
               <td>{new Date(t.fecha_creacion).toLocaleString('es-ES')}</td>
               <td><span className={`badge ${t.estado === 'abierta' ? 'red' : t.estado === 'en_proceso' ? 'amber' : 'green'}`}>{String(t.estado).replace('_', ' ')}</span></td>
               <td><div className="row-actions"><Link className="btn btn-secondary" href={`/tickets/${t.id}`}>Ver</Link>{vista === 'activos' && profile.rol === 'admin' && <form action={deleteTicket.bind(null, t.id)}><button className="btn btn-danger">Papelera</button></form>}</div></td>

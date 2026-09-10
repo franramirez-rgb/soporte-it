@@ -1,16 +1,17 @@
 import Link from 'next/link'
 import { addTicketMessage, closeTicket, reopenTicket, startTicket } from '@/app/actions'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { requireUser } from '@/lib/auth'
 import { TicketLive } from '@/components/ticket-live'
-import { oneRelation } from '@/lib/supabase/relations'
 
 export default async function TicketDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const ticketId = Number(id)
-  const { supabase, profile } = await requireUser()
+  const { profile } = await requireUser()
+  const supabase = createAdminClient()
   const { data: ticket } = await supabase
     .from('incidencias')
-    .select('id,titulo,descripcion,estado,fecha_creacion,usuario_id,usuarios:usuario_id(nombre,email)')
+    .select('id,titulo,descripcion,estado,fecha_creacion,usuario_id')
     .eq('id', ticketId)
     .eq('eliminado', false)
     .single()
@@ -21,20 +22,24 @@ export default async function TicketDetail({ params }: { params: Promise<{ id: s
     return <div className="empty">No tienes permiso para acceder a esta incidencia.</div>
   }
 
-  const { data: messagesRaw } = await supabase
-    .from('mensajes')
-    .select('id,mensaje,adjunto,fecha_creacion,usuario_id,usuarios:usuario_id(nombre,rol)')
-    .eq('incidencia_id', ticket.id)
-    .order('fecha_creacion', { ascending: true })
+  const [{ data: owner }, { data: messagesRaw }] = await Promise.all([
+    supabase.from('usuarios').select('id,nombre,email,centro_coste_id').eq('id', ticket.usuario_id).maybeSingle(),
+    supabase.from('mensajes').select('id,mensaje,adjunto,fecha_creacion,usuario_id').eq('incidencia_id', ticket.id).order('fecha_creacion', { ascending: true }),
+  ])
 
-  const messages = messagesRaw ?? []
+  const messageUserIds = [...new Set((messagesRaw ?? []).map(message => message.usuario_id))]
+  const { data: messageUsersRaw } = messageUserIds.length
+    ? await supabase.from('usuarios').select('id,nombre,rol').in('id', messageUserIds)
+    : { data: [] as Array<{ id: number; nombre: string; rol: string }> }
+  const messageUserById = new Map((messageUsersRaw ?? []).map(user => [user.id, user]))
+  const messages = (messagesRaw ?? []).map(message => ({ ...message, usuarios: messageUserById.get(message.usuario_id) ?? null }))
 
   return <div className="stack">
     <div className="toolbar">
       <div>
         <Link href="/tickets" className="small" style={{ color: '#2563eb' }}>← Volver a incidencias</Link>
         <h1 style={{ margin: '8px 0 4px' }}>#INC-{String(ticket.id).padStart(3, '0')} · {ticket.titulo}</h1>
-        <div className="muted">{new Date(ticket.fecha_creacion).toLocaleString('es-ES')} · {oneRelation(ticket.usuarios)?.nombre}</div>
+        <div className="muted">{new Date(ticket.fecha_creacion).toLocaleString('es-ES')} · {owner?.nombre || 'Usuario desconocido'}</div>
       </div>
       <div className="row-actions">
         {profile.rol === 'admin' && ticket.estado === 'abierta' && <form action={startTicket.bind(null, ticket.id)}><button className="btn btn-warning">Poner en proceso</button></form>}

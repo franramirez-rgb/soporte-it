@@ -1,24 +1,33 @@
 import Link from 'next/link'
 import { createEquipment, deleteEquipment, editEquipment, releaseEquipment } from '@/app/actions'
 import { AssignEquipmentForm } from '@/components/assign-equipment-form'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { requireUser } from '@/lib/auth'
-import { oneRelation } from '@/lib/supabase/relations'
 
 export default async function Material({ searchParams }: { searchParams: Promise<{ page?: string; editar?: string }> }) {
   const params = await searchParams
   const page = Math.max(1, Number(params.page || 1))
   const editId = Math.max(0, Number(params.editar || 0))
   const pageSize = 25
-  const { supabase, profile } = await requireUser()
+  const { profile } = await requireUser()
+  const supabase = createAdminClient()
   const staff = profile.rol === 'admin' || profile.rol === 'controller'
 
   const [{ data: itemsRaw, count }, { data: usersRaw }, { data: editingRaw }] = await Promise.all([
-    supabase.from('equipos').select('id,tipo,marca,modelo,identificador,estado_equipo,observaciones,usuario_id,usuarios:usuario_id(nombre),centros:centro_coste_id(nombre)', { count: 'exact' }).order('tipo').order('marca').range((page - 1) * pageSize, page * pageSize - 1),
+    supabase.from('equipos').select('id,tipo,marca,modelo,identificador,estado_equipo,observaciones,usuario_id,centro_coste_id', { count: 'exact' }).order('tipo').order('marca').range((page - 1) * pageSize, page * pageSize - 1),
     staff ? supabase.from('usuarios').select('id,nombre,email').eq('estado_cuenta', 'activo').order('nombre') : Promise.resolve({ data: [] as Array<{ id: number; nombre: string; email: string }> }),
     editId > 0 ? supabase.from('equipos').select('id,tipo,marca,modelo,identificador,estado_equipo,observaciones,usuario_id,centro_coste_id').eq('id', editId).maybeSingle() : Promise.resolve({ data: null }),
   ])
 
   const items = itemsRaw ?? []
+  const itemUserIds = [...new Set(items.map(item => item.usuario_id).filter(Boolean))]
+  const itemCenterIds = [...new Set(items.map(item => item.centro_coste_id).filter(Boolean))]
+  const [{ data: itemUsersRaw }, { data: itemCentersRaw }] = await Promise.all([
+    itemUserIds.length ? supabase.from('usuarios').select('id,nombre').in('id', itemUserIds) : Promise.resolve({ data: [] as Array<{id:number; nombre:string}> }),
+    itemCenterIds.length ? supabase.from('centros_coste').select('id,nombre').in('id', itemCenterIds) : Promise.resolve({ data: [] as Array<{id:number; nombre:string}> }),
+  ])
+  const itemUserById = new Map((itemUsersRaw ?? []).map(user => [user.id, user.nombre]))
+  const itemCenterById = new Map((itemCentersRaw ?? []).map(center => [center.id, center.nombre]))
   const users = usersRaw ?? []
   const editingEquipment = editingRaw ?? null
   const totalPages = Math.max(1, Math.ceil((count || 0) / pageSize))
@@ -62,7 +71,7 @@ export default async function Material({ searchParams }: { searchParams: Promise
 
     <div className="card"><div className="table-wrap"><table className="table"><thead><tr><th>Tipo</th><th>Equipo</th><th>S/N</th><th>Usuario</th><th>Centro</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>
       {items.map(item => <tr key={item.id}>
-        <td>{item.tipo}</td><td><strong>{item.marca} {item.modelo}</strong><div className="small muted truncate">{item.observaciones}</div></td><td><code>{item.identificador}</code></td><td>{oneRelation(item.usuarios)?.nombre || 'Sin asignar'}</td><td>{oneRelation(item.centros)?.nombre || 'Sin asignar'}</td>
+        <td>{item.tipo}</td><td><strong>{item.marca} {item.modelo}</strong><div className="small muted truncate">{item.observaciones}</div></td><td><code>{item.identificador}</code></td><td>{item.usuario_id ? itemUserById.get(item.usuario_id) || 'Sin asignar' : 'Sin asignar'}</td><td>{item.centro_coste_id ? itemCenterById.get(item.centro_coste_id) || 'Sin asignar' : 'Sin asignar'}</td>
         <td><span className={`badge ${item.estado_equipo === 'en_stock' ? 'green' : item.estado_equipo === 'asignado' ? 'blue' : item.estado_equipo === 'reparacion' ? 'amber' : 'red'}`}>{item.estado_equipo.replace('_', ' ')}</span></td>
         <td>{staff && <div className="row-actions"><Link className="btn btn-secondary btn-sm" href={query(page, item.id)}>Gestionar</Link>{item.usuario_id && <form action={releaseEquipment.bind(null, item.id, 'en_stock')}><button className="btn btn-warning btn-sm">Liberar</button></form>}<form action={deleteEquipment.bind(null, item.id)}><button className="btn btn-danger btn-sm">Borrar</button></form></div>}</td>
       </tr>)}

@@ -5,7 +5,6 @@ import { redirect } from 'next/navigation'
 import { after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { oneRelation } from '@/lib/supabase/relations'
 import type { User } from '@supabase/supabase-js'
 import {
   sendEquipmentAssignedUserEmail,
@@ -295,11 +294,17 @@ export async function createTask(formData: FormData) {
   if (incidenceId) {
     const { data: incidence } = await admin
       .from('incidencias')
-      .select('usuario_id,usuarios:usuario_id(centro_coste_id)')
+      .select('usuario_id')
       .eq('id', incidenceId)
       .single()
-    const creator = oneRelation(incidence?.usuarios)
-    centerId = creator?.centro_coste_id ?? null
+    if (incidence?.usuario_id) {
+      const { data: ticketOwner } = await admin
+        .from('usuarios')
+        .select('centro_coste_id')
+        .eq('id', incidence.usuario_id)
+        .single()
+      centerId = ticketOwner?.centro_coste_id ?? null
+    }
   }
 
   const { error } = await admin.from('tareas').insert({
@@ -321,33 +326,19 @@ export async function editTask(formData: FormData) {
   const incidenceId = formData.get('incidencia_id') ? Number(formData.get('incidencia_id')) : null
   let centerId = formData.get('centro_coste_id') ? Number(formData.get('centro_coste_id')) : null
 
-  // Una tarea ligada a una incidencia hereda siempre el centro de coste
-  // del usuario que creó la incidencia. Las tareas manuales sí pueden usar
-  // el centro seleccionado en el formulario.
-  if (incidenceId) {
-    const { data: incidence } = await admin
-      .from('incidencias')
-      .select('usuario_id,usuarios:usuario_id(centro_coste_id)')
-      .eq('id', incidenceId)
-      .eq('eliminado', false)
-      .maybeSingle()
-    if (!incidence) throw new Error('La incidencia seleccionada no existe.')
-    const creator = oneRelation(incidence.usuarios)
-    centerId = creator?.centro_coste_id ?? null
-  }
-
-  if (!Number.isInteger(id) || id <= 0) throw new Error('Tarea no válida.')
-  const nombre = String(formData.get('nombre') || '').trim()
-  if (!nombre) throw new Error('El nombre de la tarea es obligatorio.')
+  // Al editar una tarea, el centro de coste seleccionado por el administrador
+  // debe ser el valor que se guarde. El centro del creador se utiliza para
+  // inicializar las tareas automáticas creadas desde una incidencia, pero no
+  // debe sobrescribir una modificación posterior.
 
   const { data: updatedTask, error } = await admin.from('tareas').update({
-    nombre,
+    nombre: String(formData.get('nombre') || '').trim(),
     descripcion: String(formData.get('descripcion') || '').trim(),
     incidencia_id: incidenceId,
     centro_coste_id: centerId,
-  }).eq('id', id).eq('eliminado', false).select('id,centro_coste_id').maybeSingle()
+  }).eq('id', id).select('id,centro_coste_id').single()
   if (error) throw new Error(error.message)
-  if (!updatedTask) throw new Error('No se pudo actualizar la tarea. Puede que ya no exista o esté en la papelera.')
+  if (!updatedTask) throw new Error('No se pudo actualizar la tarea.')
   revalidatePath('/tasker')
   revalidatePath(`/tasker/${id}`)
 }
@@ -576,22 +567,8 @@ export async function updateUser(formData: FormData) {
   }
   const { error } = await admin.from('usuarios').update({ nombre: name, email, rol: role, centro_coste_id: center, puesto, departamento }).eq('id', id)
   if (error) throw new Error(error.message)
-
-  // Mantener la relación Usuario → Centro de coste → Incidencia → Tarea.
-  const { data: userTickets } = await admin.from('incidencias').select('id').eq('usuario_id', id)
-  const ticketIds = (userTickets ?? []).map(ticket => ticket.id)
-  if (ticketIds.length) {
-    const { error: taskSyncError } = await admin
-      .from('tareas')
-      .update({ centro_coste_id: center })
-      .in('incidencia_id', ticketIds)
-    if (taskSyncError) throw new Error(taskSyncError.message)
-  }
-
   revalidatePath('/usuarios')
   revalidatePath('/perfil')
-  revalidatePath('/tickets')
-  revalidatePath('/tasker')
 }
 
 export async function createUserManual(formData: FormData) {
