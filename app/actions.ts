@@ -324,14 +324,18 @@ export async function editTask(formData: FormData) {
   // inicializar las tareas automáticas creadas desde una incidencia, pero no
   // debe sobrescribir una modificación posterior.
 
+  if (!Number.isInteger(id) || id <= 0) throw new Error('Tarea no válida.')
+  const nombre = String(formData.get('nombre') || '').trim()
+  if (!nombre) throw new Error('El nombre de la tarea es obligatorio.')
+
   const { data: updatedTask, error } = await admin.from('tareas').update({
-    nombre: String(formData.get('nombre') || '').trim(),
+    nombre,
     descripcion: String(formData.get('descripcion') || '').trim(),
     incidencia_id: incidenceId,
     centro_coste_id: centerId,
-  }).eq('id', id).select('id,centro_coste_id').single()
+  }).eq('id', id).eq('eliminado', false).select('id,centro_coste_id').maybeSingle()
   if (error) throw new Error(error.message)
-  if (!updatedTask) throw new Error('No se pudo actualizar la tarea.')
+  if (!updatedTask) throw new Error('No se pudo actualizar la tarea. Puede que ya no exista o esté en la papelera.')
   revalidatePath('/tasker')
   revalidatePath(`/tasker/${id}`)
 }

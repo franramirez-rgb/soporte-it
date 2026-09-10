@@ -216,7 +216,7 @@ export async function GET(request: Request) {
   const summaryRows: string[] = [
     '<row r="1" ht="34"><c r="A1" s="2" t="inlineStr"><is><t>REBIOS SL · REPORTE DE TAREAS</t></is></c><c r="B1" s="2"/><c r="C1" s="2"/><c r="D1" s="2"/></row>',
     `<row r="2">${inlineCell('A2', 'Periodo de trabajo', 3)}${inlineCell('B2', cycleLabel)}${inlineCell('C2', 'Mes de reporte', 3)}${inlineCell('D2', periodLabel)}</row>`,
-    `<row r="3">${inlineCell('A3', 'Tareas cerradas', 3)}${numberCell('B3', rows.length)}${inlineCell('C3', 'Total horas', 3)}${numberCell('D3', totalHours)}</row>`,
+    `<row r="3">${inlineCell('A3', 'Tareas incluidas', 3)}${numberCell('B3', rows.length)}${inlineCell('C3', 'Total horas', 3)}${numberCell('D3', totalHours)}</row>`,
     '<row r="5"><c r="A5" s="1" t="inlineStr"><is><t>CENTRO DE COSTE</t></is></c><c r="B5" s="1" t="inlineStr"><is><t>HORAS</t></is></c></row>',
   ]
 

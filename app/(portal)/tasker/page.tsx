@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { createCostCenter, createTask, deleteCostCenter, deleteTask, editTask, toggleTask } from '@/app/actions'
 import { requireRole } from '@/lib/auth'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 export default async function Tasker({
   searchParams,
@@ -20,6 +21,9 @@ export default async function Tasker({
 
   const { supabase, profile } = await requireRole(['admin', 'auditor'])
   const isAdmin = profile.rol === 'admin'
+  // La edición usa el cliente de servicio para que la carga del formulario
+  // no dependa de una política RLS de lectura distinta a la del listado.
+  const adminForEdit = isAdmin && editId > 0 ? createAdminClient() : null
 
   const [
     { data: tasksRaw, count },
@@ -48,8 +52,8 @@ export default async function Tasker({
       .gte('fecha_creacion', startDate.toISOString())
       .lt('fecha_creacion', endDate.toISOString())
       .order('fecha_creacion', { ascending: false }),
-    editId > 0
-      ? supabase.from('tareas').select('id,nombre,descripcion,incidencia_id,estado,centro_coste_id').eq('id', editId).eq('eliminado', false).maybeSingle()
+    adminForEdit
+      ? adminForEdit.from('tareas').select('id,nombre,descripcion,incidencia_id,estado,centro_coste_id').eq('id', editId).eq('eliminado', false).maybeSingle()
       : Promise.resolve({ data: null }),
   ])
 
