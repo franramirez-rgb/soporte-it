@@ -108,7 +108,7 @@ export async function createTicket(formData: FormData) {
       estado: 'abierta',
       eliminado: false,
     },
-    { onConflict: 'incidencia_id', ignoreDuplicates: true },
+    { onConflict: 'incidencia_id' },
   )
   if (taskError) throw new Error(taskError.message)
 
@@ -126,6 +126,7 @@ export async function createTicket(formData: FormData) {
   })
 
   revalidatePath('/tickets')
+  revalidatePath('/tasker')
   revalidatePath('/dashboard')
 }
 
@@ -286,7 +287,27 @@ export async function createTask(formData: FormData) {
   if (profile.rol !== 'admin') return
   const name = String(formData.get('nombre') || '').trim()
   if (!name) return
-  const { error } = await admin.from('tareas').insert({ nombre: name, descripcion: String(formData.get('descripcion') || '').trim(), incidencia_id: formData.get('incidencia_id') ? Number(formData.get('incidencia_id')) : null, centro_coste_id: formData.get('centro_coste_id') ? Number(formData.get('centro_coste_id')) : null, estado: 'abierta', eliminado: false })
+
+  const incidenceId = formData.get('incidencia_id') ? Number(formData.get('incidencia_id')) : null
+  let centerId = formData.get('centro_coste_id') ? Number(formData.get('centro_coste_id')) : null
+
+  if (incidenceId) {
+    const { data: incidence } = await admin
+      .from('incidencias')
+      .select('usuario_id,usuarios:usuario_id(centro_coste_id)')
+      .eq('id', incidenceId)
+      .single()
+    centerId = incidence?.usuarios?.[0]?.centro_coste_id ?? null
+  }
+
+  const { error } = await admin.from('tareas').insert({
+    nombre: name,
+    descripcion: String(formData.get('descripcion') || '').trim(),
+    incidencia_id: incidenceId,
+    centro_coste_id: centerId,
+    estado: 'abierta',
+    eliminado: false,
+  })
   if (error) throw new Error(error.message)
   revalidatePath('/tasker')
 }
@@ -295,9 +316,27 @@ export async function editTask(formData: FormData) {
   const { admin, profile } = await ctx()
   if (profile.rol !== 'admin') return
   const id = Number(formData.get('id'))
-  const { error } = await admin.from('tareas').update({ nombre: String(formData.get('nombre') || '').trim(), descripcion: String(formData.get('descripcion') || '').trim(), incidencia_id: formData.get('incidencia_id') ? Number(formData.get('incidencia_id')) : null, centro_coste_id: formData.get('centro_coste_id') ? Number(formData.get('centro_coste_id')) : null }).eq('id', id)
+  const incidenceId = formData.get('incidencia_id') ? Number(formData.get('incidencia_id')) : null
+  let centerId = formData.get('centro_coste_id') ? Number(formData.get('centro_coste_id')) : null
+
+  if (incidenceId) {
+    const { data: incidence } = await admin
+      .from('incidencias')
+      .select('usuario_id,usuarios:usuario_id(centro_coste_id)')
+      .eq('id', incidenceId)
+      .single()
+    centerId = incidence?.usuarios?.[0]?.centro_coste_id ?? null
+  }
+
+  const { error } = await admin.from('tareas').update({
+    nombre: String(formData.get('nombre') || '').trim(),
+    descripcion: String(formData.get('descripcion') || '').trim(),
+    incidencia_id: incidenceId,
+    centro_coste_id: centerId,
+  }).eq('id', id)
   if (error) throw new Error(error.message)
   revalidatePath('/tasker')
+  revalidatePath(`/tasker/${id}`)
 }
 
 export async function toggleTask(id: number, cerrar: boolean) {
@@ -340,9 +379,19 @@ export async function logHours(formData: FormData) {
   const horas = Number(String(formData.get('horas') || '0').replace(',', '.'))
   const comentario = String(formData.get('comentario') || '').trim()
   if (tareaId <= 0 || horas <= 0 || !comentario) return
+
+  const { data: task } = await admin
+    .from('tareas')
+    .select('estado')
+    .eq('id', tareaId)
+    .eq('eliminado', false)
+    .maybeSingle()
+  if (!task || task.estado === 'cerrada') return
+
   const { error } = await admin.from('tarea_registros').insert({ tarea_id: tareaId, usuario_id: profile.id, horas, comentario })
   if (error) throw new Error(error.message)
   revalidatePath('/tasker')
+  revalidatePath(`/tasker/${tareaId}`)
 }
 
 export async function createEquipment(formData: FormData) {

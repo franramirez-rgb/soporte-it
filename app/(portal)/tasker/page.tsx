@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { createCostCenter, createTask, deleteCostCenter, deleteTask, editTask, logHours, toggleTask } from '@/app/actions'
+import { createCostCenter, createTask, deleteCostCenter, deleteTask, editTask, toggleTask } from '@/app/actions'
 import { requireRole } from '@/lib/auth'
 
 export default async function Tasker({
@@ -29,18 +29,30 @@ export default async function Tasker({
     { data: editingRaw },
   ] = await Promise.all([
     (() => {
-      let query = supabase.from('tareas').select('id,nombre,descripcion,incidencia_id,estado,fecha_creacion,fecha_cierre,centro_coste_id,centros:centro_coste_id(nombre),incidencias:incidencia_id(titulo,usuarios:usuario_id(nombre))', { count: 'exact' }).eq('eliminado', false)
+      let query = supabase
+        .from('tareas')
+        .select('id,nombre,descripcion,incidencia_id,estado,fecha_creacion,fecha_cierre,centro_coste_id,centros:centro_coste_id(nombre),incidencias:incidencia_id(titulo,usuarios:usuario_id(nombre))', { count: 'exact' })
+        .eq('eliminado', false)
       query = vista === 'archivo' ? query.eq('estado', 'cerrada') : query.neq('estado', 'cerrada')
       return query.order('fecha_creacion', { ascending: false }).range((page - 1) * pageSize, page * pageSize - 1)
     })(),
     supabase.from('tareas').select('id,centro_coste_id').eq('eliminado', false),
     supabase.from('centros_coste').select('id,nombre').order('nombre'),
-    isAdmin ? supabase.from('incidencias').select('id,titulo').eq('eliminado', false).order('id', { ascending: false }) : Promise.resolve({ data: [] as Array<{ id: number; titulo: string }> }),
-    supabase.from('tarea_registros').select('id,tarea_id,horas,fecha_creacion').gte('fecha_creacion', startDate.toISOString()).lt('fecha_creacion', endDate.toISOString()).order('fecha_creacion', { ascending: false }),
-    editId > 0 ? supabase.from('tareas').select('id,nombre,descripcion,incidencia_id,estado,centro_coste_id').eq('id', editId).eq('eliminado', false).maybeSingle() : Promise.resolve({ data: null }),
+    isAdmin
+      ? supabase.from('incidencias').select('id,titulo').eq('eliminado', false).order('id', { ascending: false })
+      : Promise.resolve({ data: [] as Array<{ id: number; titulo: string }> }),
+    supabase
+      .from('tarea_registros')
+      .select('id,tarea_id,horas,fecha_creacion')
+      .gte('fecha_creacion', startDate.toISOString())
+      .lt('fecha_creacion', endDate.toISOString())
+      .order('fecha_creacion', { ascending: false }),
+    editId > 0
+      ? supabase.from('tareas').select('id,nombre,descripcion,incidencia_id,estado,centro_coste_id').eq('id', editId).eq('eliminado', false).maybeSingle()
+      : Promise.resolve({ data: null }),
   ])
 
-  const tasks = tasksRaw ?? []
+  const tasks = (tasksRaw ?? []) as any[]
   const taskMeta = taskMetaRaw ?? []
   const centers = centersRaw ?? []
   const tickets = ticketsRaw ?? []
@@ -48,7 +60,9 @@ export default async function Tasker({
   const editingTask = editingRaw ?? null
 
   const hoursByTask = new Map<number, number>()
-  for (const row of regs) hoursByTask.set(row.tarea_id, (hoursByTask.get(row.tarea_id) || 0) + Number(row.horas))
+  for (const row of regs) {
+    hoursByTask.set(row.tarea_id, (hoursByTask.get(row.tarea_id) || 0) + Number(row.horas))
+  }
 
   const centerByTask = new Map<number, number | null>(taskMeta.map(task => [task.id, task.centro_coste_id] as const))
   const hoursByCenter = new Map<number, number>()
@@ -68,25 +82,40 @@ export default async function Tasker({
   return (
     <div className="stack">
       <div className="hero">
-        <div><h1>Tasker</h1><p>{vista === 'archivo' ? 'Tareas cerradas archivadas.' : 'Tareas activas y horas por centro de coste.'}</p></div>
+        <div>
+          <h1>Tasker</h1>
+          <p>{vista === 'archivo' ? 'Tareas cerradas archivadas.' : 'Tareas activas y horas por centro de coste.'}</p>
+        </div>
         <div className="toolbar-right">
           <div className="row-actions">
             <Link className={`btn ${vista === 'activos' ? 'btn-primary' : 'btn-secondary'}`} href={query(1)}>Activas</Link>
             <Link className={`btn ${vista === 'archivo' ? 'btn-primary' : 'btn-secondary'}`} href={query(1)}>Archivo</Link>
           </div>
-          <form method="GET" className="row-actions"><input type="hidden" name="vista" value={vista} /><input className="input compact-input" type="month" name="month" defaultValue={month} /><button className="btn btn-secondary">Aplicar</button></form>
-          <a className="btn btn-secondary" href={`/api/export/tasker?month=${month}`}>Exportar</a>
+          <form method="GET" className="row-actions">
+            <input type="hidden" name="vista" value={vista} />
+            <input className="input compact-input" type="month" name="month" defaultValue={month} />
+            <button className="btn btn-secondary">Aplicar</button>
+          </form>
+          <a className="btn btn-secondary" href={`/api/export/tasker?month=${month}`}>Exportar Excel</a>
         </div>
       </div>
 
       <div className="quick-grid">
         <div className="quick-card"><div className="label">Horas del mes</div><div className="value">{totalHours.toFixed(2)} h</div></div>
-        {centers.slice(0, 3).map(center => <div className="quick-card" key={center.id}><div className="label">{center.nombre}</div><div className="value">{(hoursByCenter.get(center.id) || 0).toFixed(2)} h</div></div>)}
+        {centers.slice(0, 3).map(center => (
+          <div className="quick-card" key={center.id}>
+            <div className="label">{center.nombre}</div>
+            <div className="value">{(hoursByCenter.get(center.id) || 0).toFixed(2)} h</div>
+          </div>
+        ))}
       </div>
 
       {isAdmin && editingTask && (
         <div className="card pad edit-panel">
-          <div className="toolbar"><div><h2 className="section-title">Editar tarea</h2><p className="section-subtitle">Modifica la tarea seleccionada.</p></div><Link className="btn btn-ghost" href={query(page)}>Cerrar</Link></div>
+          <div className="toolbar">
+            <div><h2 className="section-title">Editar tarea</h2><p className="section-subtitle">Modifica la tarea seleccionada.</p></div>
+            <Link className="btn btn-ghost" href={query(page)}>Cerrar</Link>
+          </div>
           <form action={editTask} className="form-grid">
             <input type="hidden" name="id" value={editingTask.id} />
             <label>Nombre<input className="input" name="nombre" defaultValue={editingTask.nombre} required /></label>
@@ -114,40 +143,41 @@ export default async function Tasker({
       <div className="card">
         <div className="table-wrap">
           <table className="table">
-            <thead><tr><th>Tarea</th><th>Incidencia</th><th>Creado por</th><th>Centro</th><th>Horas</th><th>Estado</th><th>Acciones</th></tr></thead>
-            <tbody>{tasks.map(task => <tr key={task.id}>
-              <td><strong>{task.nombre}</strong><div className="small muted truncate">{task.descripcion}</div></td>
-              <td>{task.incidencia_id ? `#INC-${String(task.incidencia_id).padStart(3, '0')}` : '—'}</td>
-              <td>{task.incidencias?.[0]?.usuarios?.[0]?.nombre || '—'}</td>
-              <td>{task.centros?.[0]?.nombre || 'Sin asignar'}</td>
-              <td><strong>{(hoursByTask.get(task.id) || 0).toFixed(2)} h</strong></td>
-              <td><span className={`badge ${task.estado === 'cerrada' ? 'green' : 'blue'}`}>{task.estado}</span></td>
-              <td>{isAdmin && <div className="row-actions">
-                <Link className="btn btn-secondary btn-sm" href={query(page, task.id)}>Editar</Link>
-                <form action={toggleTask.bind(null, task.id, task.estado !== 'cerrada')}><button className="btn btn-warning btn-sm">{task.estado === 'cerrada' ? 'Reabrir' : 'Cerrar'}</button></form>
-                <form action={deleteTask.bind(null, task.id)}><button className="btn btn-danger btn-sm">Papelera</button></form>
-              </div>}</td>
-            </tr>)}</tbody>
+            <thead><tr><th>Tarea</th><th>Incidencia</th><th>Creado por</th><th>Centro de coste</th><th>Horas</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <tbody>
+              {tasks.map(task => (
+                <tr key={task.id}>
+                  <td>
+                    <Link href={`/tasker/${task.id}?month=${encodeURIComponent(month)}&vista=${vista}&page=${page}`}><strong>{task.nombre}</strong></Link>
+                    <div className="small muted truncate">{task.descripcion}</div>
+                  </td>
+                  <td>{task.incidencia_id ? `#INC-${String(task.incidencia_id).padStart(3, '0')}` : '—'}</td>
+                  <td>{task.incidencias?.[0]?.usuarios?.[0]?.nombre || '—'}</td>
+                  <td>{task.centros?.[0]?.nombre || 'Sin asignar'}</td>
+                  <td><strong>{(hoursByTask.get(task.id) || 0).toFixed(2)} h</strong></td>
+                  <td><span className={`badge ${task.estado === 'cerrada' ? 'green' : 'blue'}`}>{task.estado}</span></td>
+                  <td>
+                    <div className="row-actions">
+                      <Link className="btn btn-secondary btn-sm" href={`/tasker/${task.id}?month=${encodeURIComponent(month)}&vista=${vista}&page=${page}`}>Ver horas</Link>
+                      {isAdmin && <>
+                        <Link className="btn btn-secondary btn-sm" href={query(page, task.id)}>Editar</Link>
+                        <form action={toggleTask.bind(null, task.id, task.estado !== 'cerrada')}><button className="btn btn-warning btn-sm">{task.estado === 'cerrada' ? 'Reabrir' : 'Cerrar'}</button></form>
+                        <form action={deleteTask.bind(null, task.id)}><button className="btn btn-danger btn-sm">Papelera</button></form>
+                      </>}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
           </table>
-          {!tasks.length && <div className="empty">No hay tareas.</div>}
+          {!tasks.length && <div className="empty">{vista === 'archivo' ? 'No hay tareas archivadas.' : 'No hay tareas activas.'}</div>}
         </div>
       </div>
 
-      {isAdmin && <div className="grid g2">
-        <div className="card pad">
-          <h2 className="section-title">Imputar horas</h2>
-          <form action={logHours} className="stack" style={{ marginTop: 14 }}>
-            <label className="stack small"><strong>Tarea</strong><select className="input" name="tarea_id" required>{tasks.filter(task => task.estado !== 'cerrada').map(task => <option key={task.id} value={task.id}>{task.nombre}</option>)}</select></label>
-            <label className="stack small"><strong>Horas</strong><input className="input" type="number" name="horas" min="0.05" step="0.05" required /></label>
-            <label className="stack small"><strong>Comentario</strong><textarea className="input" name="comentario" rows={4} required /></label>
-            <button className="btn btn-primary">Registrar horas</button>
-          </form>
-        </div>
-        <div className="card pad">
-          <div className="toolbar"><div><h2 className="section-title">Centros de coste</h2><p className="section-subtitle">{centers.length} centros</p></div></div>
-          <form action={createCostCenter} className="row-actions"><input className="input" name="nombre" placeholder="Nuevo centro" required /><button className="btn btn-primary">Añadir</button></form>
-          <div className="compact-list" style={{ marginTop: 14 }}>{centers.map(center => <div key={center.id} className="list-row"><span>{center.nombre}</span><form action={deleteCostCenter.bind(null, center.id)}><button className="btn btn-danger btn-sm">Eliminar</button></form></div>)}</div>
-        </div>
+      {isAdmin && <div className="card pad">
+        <div className="toolbar"><div><h2 className="section-title">Centros de coste</h2><p className="section-subtitle">{centers.length} centros</p></div></div>
+        <form action={createCostCenter} className="row-actions"><input className="input" name="nombre" placeholder="Nuevo centro" required /><button className="btn btn-primary">Añadir</button></form>
+        <div className="compact-list" style={{ marginTop: 14 }}>{centers.map(center => <div key={center.id} className="list-row"><span>{center.nombre}</span><form action={deleteCostCenter.bind(null, center.id)}><button className="btn btn-danger btn-sm">Eliminar</button></form></div>)}</div>
       </div>}
 
       {totalPages > 1 && <div className="pagination"><Link className="btn btn-secondary" href={query(Math.max(1, page - 1))}>Anterior</Link><span className="small muted">Página {page} de {totalPages}</span><Link className="btn btn-secondary" href={query(Math.min(totalPages, page + 1))}>Siguiente</Link></div>}

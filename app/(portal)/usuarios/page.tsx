@@ -50,7 +50,7 @@ export default async function Usuarios({ searchParams }: { searchParams: Promise
       <div className="card pad"><h2 className="section-title">Importación CSV</h2><form action={importUsersCsv} className="stack" encType="multipart/form-data" style={{ marginTop: 14 }}><input className="input" type="file" name="archivo_csv" accept=".csv,text/csv" required /><div className="notice info">Nombre;Correo;Centro_Coste;Puesto;Departamento;Rol;Password;Tipo_Equipo;Marca;Modelo;Identificador_SN</div><button className="btn btn-secondary">Importar CSV</button></form></div>
     </div>}
 
-    <div className="card"><div className="table-wrap"><table className="table"><thead><tr><th>Usuario</th><th>Rol</th><th>Centro</th><th>Estado</th><th>Auth</th><th>Acciones</th></tr></thead><tbody>
+    <div className="card"><div className="table-wrap"><table className="table"><thead><tr><th>Usuario</th><th>Rol</th><th>Centro de coste</th><th>Estado</th><th>Auth</th><th>Acciones</th></tr></thead><tbody>
       {users.map(user => <tr key={user.id}>
         <td><strong>{user.nombre}</strong><div className="small muted">{user.email}</div><div className="small muted">{user.puesto || 'Sin puesto'}{user.departamento ? ` · ${user.departamento}` : ''}</div></td><td><span className="badge slate">{user.rol}</span></td><td>{user.centros?.[0]?.nombre || '—'}</td>
         <td><span className={`badge ${user.estado_cuenta === 'activo' ? 'green' : user.estado_cuenta === 'pendiente' ? 'amber' : 'slate'}`}>{user.estado_cuenta}</span></td><td>{user.auth_user_id ? <span className="badge green">vinculado</span> : <span className="badge amber">sin acceso</span>}</td>
