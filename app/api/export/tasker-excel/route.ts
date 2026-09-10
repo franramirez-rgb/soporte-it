@@ -79,12 +79,12 @@ export async function GET(request: Request) {
     ]
     sheet.mergeCells('A1:H1')
     const title = sheet.getCell('A1')
-    title.value = 'REBIOS SL · REPORTE DE HORAS TASKER'
+    title.value = 'REBIOS SL · REPORTE DE HORAS BORJAMOTOR'
     title.font = { name: 'Calibri', size: 16, bold: true, color: { argb: 'FFFFFFFF' } }
     title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } }
     title.alignment = { horizontal: 'left', vertical: 'middle' }
     sheet.getRow(1).height = 30
-    sheet.getCell('A2').value = 'Periodo'; sheet.getCell('B2').value = period; sheet.getCell('D2').value = 'Tareas cerradas'; sheet.getCell('E2').value = details.length; sheet.getCell('F2').value = 'Total horas'; sheet.getCell('G2').value = totalHours
+    sheet.getCell('A2').value = 'Periodo'; sheet.getCell('B2').value = period;
     for (const cell of ['A2','B2','D2','E2','F2','G2']) {
       sheet.getCell(cell).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9EEF5' } }
       sheet.getCell(cell).border = { top: { style: 'thin', color: { argb: 'FFD0D7DE' } }, bottom: { style: 'thin', color: { argb: 'FFD0D7DE' } }, left: { style: 'thin', color: { argb: 'FFD0D7DE' } }, right: { style: 'thin', color: { argb: 'FFD0D7DE' } } }
