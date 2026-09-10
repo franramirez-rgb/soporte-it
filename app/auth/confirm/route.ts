@@ -1,5 +1,0 @@
-import {NextResponse} from 'next/server'
-import {createClient} from '@/lib/supabase/server'
-import {createAdminClient} from '@/lib/supabase/admin'
-import {sendRegistrationVerifiedAdminEmail} from '@/lib/mailer'
-export async function GET(request:Request){const url=new URL(request.url);const token_hash=url.searchParams.get('token_hash');const type=(url.searchParams.get('type')||'email') as 'email';if(!token_hash)return NextResponse.redirect(new URL('/login?error=token',url.origin));const supabase=await createClient();const {error}=await supabase.auth.verifyOtp({token_hash,type});if(error)return NextResponse.redirect(new URL('/login?error=verification',url.origin));const {data:{user}}=await supabase.auth.getUser();if(user){const admin=createAdminClient();const {data:profile}=await admin.from('usuarios').select('id,nombre,email,estado_cuenta').eq('auth_user_id',user.id).maybeSingle();if(profile&&profile.estado_cuenta!=='activo'){await admin.from('usuarios').update({estado_cuenta:'pendiente'}).eq('id',profile.id);await sendRegistrationVerifiedAdminEmail({name:profile.nombre,email:profile.email})}}return NextResponse.redirect(new URL('/pendiente',url.origin))}
