@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer'
+import type { Transporter } from 'nodemailer'
 import { createAdminClient } from '@/lib/supabase/admin'
 import * as templates from '@/lib/mailer/templates'
 
@@ -15,7 +16,7 @@ type EmailEvent =
   | 'ticket_reopened_user'
   | 'equipment_assigned_user'
 
-let cachedTransport: nodemailer.Transporter | null = null
+let cachedTransport: Transporter | null = null
 
 function transport() {
   if (cachedTransport) return cachedTransport
