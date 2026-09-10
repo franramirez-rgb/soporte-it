@@ -80,9 +80,7 @@ export default async function Tasker({
   const hoursByCenter = new Map<number, number>()
   for (const row of regsRaw ?? []) {
     const centerId = centerByTaskId.get(row.tarea_id)
-    if (centerId) {
-      hoursByCenter.set(centerId, (hoursByCenter.get(centerId) || 0) + Number(row.horas))
-    }
+    if (centerId) hoursByCenter.set(centerId, (hoursByCenter.get(centerId) || 0) + Number(row.horas))
   }
 
   const totalHours = (regsRaw ?? []).reduce((sum, row) => sum + Number(row.horas), 0)
@@ -104,7 +102,7 @@ export default async function Tasker({
             <Link className={`btn ${vista === 'archivo' ? 'btn-primary' : 'btn-secondary'}`} href={archiveHref}>Archivo</Link>
           </div>
           <form method="GET" className="row-actions"><input type="hidden" name="vista" value={vista} /><input className="input compact-input" type="month" name="month" defaultValue={month} /><button className="btn btn-secondary">Aplicar</button></form>
-          <a className="btn btn-secondary" href={`/api/export/tasker?month=${month}`}>Exportar Excel</a>
+          <a className="btn btn-secondary" href={`/api/export/tasker-excel?month=${month}`}>Exportar Excel</a>
         </div>
       </div>
 
