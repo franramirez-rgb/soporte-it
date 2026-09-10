@@ -245,6 +245,7 @@ export async function GET(request: Request) {
     const creatorCenter = oneRelation(creator?.centros)
     const taskCenter = oneRelation(task.centros)
     const center = creatorCenter?.nombre || taskCenter?.nombre || 'Sin Asignar'
+    const creatorName = creator?.nombre || '—'
     const hours = records.reduce((sum: number, record: any) => sum + Number(record.horas), 0)
     const work = records.length
       ? records.map((record: any) => `${new Date(record.fecha_creacion).toLocaleDateString('es-ES')} · ${oneRelation(record.usuarios)?.nombre || `Usuario #${record.usuario_id}`} · ${Number(record.horas).toFixed(2)} h · ${record.comentario}`).join(' | ')
