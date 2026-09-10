@@ -174,9 +174,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Mes no válido.' }, { status: 400 })
   }
 
-  // El Excel debe coincidir con el selector mensual de Tasker: mes natural completo.
-  const startDate = new Date(Date.UTC(year, monthNumber - 1, 1))
-  const endExclusive = new Date(Date.UTC(year, monthNumber, 1))
+  // Mismo ciclo que el Excel legacy: del día 20 del mes anterior al día 19 del mes seleccionado.
+  const startDate = new Date(Date.UTC(year, monthNumber - 2, 20))
+  const endExclusive = new Date(Date.UTC(year, monthNumber - 1, 20))
   const monthNames = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
   const periodLabel = `${monthNames[monthNumber - 1]} de ${year}`
   const cycleLabel = `${startDate.toLocaleDateString('es-ES', { timeZone: 'UTC' })} – ${new Date(endExclusive.getTime() - 86400000).toLocaleDateString('es-ES', { timeZone: 'UTC' })}`
@@ -233,17 +233,18 @@ export async function GET(request: Request) {
     recordsByTask.set(record.tarea_id, list)
   }
 
-  // Incluimos todas las tareas que tienen actividad en el mes seleccionado:
-  // creadas, cerradas o con horas registradas. Así el Excel refleja el mismo
-  // mes natural que el contador "Horas del mes" de Tasker y nunca pierde una
-  // tarea activa que tenga horas.
-  const startIso = startDate.toISOString()
-  const endIso = endExclusive.toISOString()
+  // Una tarea pertenece al informe si se creó durante el ciclo, se cerró
+  // durante el ciclo o tiene horas registradas durante el ciclo. Esto permite
+  // que también aparezcan en Excel las tareas abiertas aunque tengan 0 horas.
   const rows = tasks.filter((task: any) => {
-    const createdInMonth = Boolean(task.fecha_creacion && task.fecha_creacion >= startIso && task.fecha_creacion < endIso)
-    const closedInMonth = Boolean(task.fecha_cierre && task.fecha_cierre >= startIso && task.fecha_cierre < endIso)
-    const hasHoursInMonth = (recordsByTask.get(task.id) || []).length > 0
-    return createdInMonth || closedInMonth || hasHoursInMonth
+    const createdInCycle = task.fecha_creacion
+      && task.fecha_creacion >= startDate.toISOString()
+      && task.fecha_creacion < endExclusive.toISOString()
+    const closedInCycle = task.estado === 'cerrada' && task.fecha_cierre
+      && task.fecha_cierre >= startDate.toISOString()
+      && task.fecha_cierre < endExclusive.toISOString()
+    const hasHoursInCycle = (recordsByTask.get(task.id) || []).length > 0
+    return Boolean(createdInCycle || closedInCycle || hasHoursInCycle)
   })
 
   const hoursByCenter = new Map<string, number>()
@@ -263,8 +264,8 @@ export async function GET(request: Request) {
 
   const summaryRows: string[] = [
     '<row r="1" ht="34"><c r="A1" s="2" t="inlineStr"><is><t>REBIOS SL · REPORTE DE TAREAS</t></is></c><c r="B1" s="2"/><c r="C1" s="2"/><c r="D1" s="2"/></row>',
-    `<row r="2">${inlineCell('A2', 'Mes de trabajo', 3)}${inlineCell('B2', cycleLabel)}${inlineCell('C2', 'Mes de reporte', 3)}${inlineCell('D2', periodLabel)}</row>`,
-    `<row r="3">${inlineCell('A3', 'Tareas del mes', 3)}${numberCell('B3', rows.length)}${inlineCell('C3', 'Total horas', 3)}${numberCell('D3', totalHours)}</row>`,
+    `<row r="2">${inlineCell('A2', 'Periodo de trabajo', 3)}${inlineCell('B2', cycleLabel)}${inlineCell('C2', 'Mes de reporte', 3)}${inlineCell('D2', periodLabel)}</row>`,
+    `<row r="3">${inlineCell('A3', 'Tareas incluidas', 3)}${numberCell('B3', rows.length)}${inlineCell('C3', 'Total horas', 3)}${numberCell('D3', totalHours)}</row>`,
     '<row r="5"><c r="A5" s="1" t="inlineStr"><is><t>CENTRO DE COSTE</t></is></c><c r="B5" s="1" t="inlineStr"><is><t>HORAS</t></is></c></row>',
   ]
 
@@ -276,7 +277,7 @@ export async function GET(request: Request) {
 
   const detailRows: string[] = [
     '<row r="1" ht="34"><c r="A1" s="2" t="inlineStr"><is><t>REPORTE DETALLADO DE TAREAS</t></is></c></row>',
-    `<row r="2">${inlineCell('A2', 'Mes', 3)}${inlineCell('B2', cycleLabel, 3)}</row>`,
+    `<row r="2">${inlineCell('A2', 'Ciclo', 3)}${inlineCell('B2', cycleLabel, 3)}</row>`,
     '<row r="4">' + ['FECHA CREACIÓN','FECHA CIERRE','ESTADO','TÍTULO','DESCRIPCIÓN','CENTRO DE COSTE','CREADO POR','HORAS','REGISTRO DE TRABAJO'].map((header, index) => inlineCell(`${colLetter(index + 1)}4`, header, 1)).join('') + '</row>',
   ]
 
@@ -298,7 +299,7 @@ export async function GET(request: Request) {
     rowNumber++
   }
 
-  detailRows.push(`<row r="${rowNumber}" ht="24">${inlineCell(`A${rowNumber}`, '')}${inlineCell(`B${rowNumber}`, '')}${inlineCell(`C${rowNumber}`, '')}${inlineCell(`D${rowNumber}`, '')}${inlineCell(`E${rowNumber}`, '')}${inlineCell(`F${rowNumber}`, 'TOTAL HORAS DEL MES', 1)}${inlineCell(`G${rowNumber}`, '')}${numberCell(`H${rowNumber}`, totalHours)}${inlineCell(`I${rowNumber}`, '', 1)}</row>`)
+  detailRows.push(`<row r="${rowNumber}" ht="24">${inlineCell(`A${rowNumber}`, '')}${inlineCell(`B${rowNumber}`, '')}${inlineCell(`C${rowNumber}`, '')}${inlineCell(`D${rowNumber}`, '')}${inlineCell(`E${rowNumber}`, '')}${inlineCell(`F${rowNumber}`, 'TOTAL HORAS', 1)}${inlineCell(`G${rowNumber}`, '')}${numberCell(`H${rowNumber}`, totalHours)}${inlineCell(`I${rowNumber}`, '', 1)}</row>`)
 
   const summaryCols = '<cols><col min="1" max="1" width="28" customWidth="1"/><col min="2" max="2" width="18" customWidth="1"/><col min="3" max="3" width="20" customWidth="1"/><col min="4" max="4" width="22" customWidth="1"/></cols>'
   const detailCols = '<cols><col min="1" max="1" width="20" customWidth="1"/><col min="2" max="2" width="20" customWidth="1"/><col min="3" max="3" width="14" customWidth="1"/><col min="4" max="4" width="32" customWidth="1"/><col min="5" max="5" width="42" customWidth="1"/><col min="6" max="6" width="24" customWidth="1"/><col min="7" max="7" width="30" customWidth="1"/><col min="8" max="8" width="14" customWidth="1"/><col min="9" max="9" width="70" customWidth="1"/></cols>'
