@@ -87,4 +87,3 @@ export const requireRole = cache(async (roles: AppRole[]) => {
 
   return ctx
 })
-```
