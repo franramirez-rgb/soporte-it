@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireRole } from '@/lib/auth'
-import { oneRelation } from '@/lib/supabase/relations'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 export const runtime = 'nodejs'
 
@@ -18,13 +18,13 @@ function xmlEscape(value: unknown) {
 }
 
 function colLetter(n: number) {
-  let value = ''
+  let result = ''
   while (n > 0) {
     const remainder = (n - 1) % 26
-    value = String.fromCharCode(65 + remainder) + value
+    result = String.fromCharCode(65 + remainder) + result
     n = Math.floor((n - 1) / 26)
   }
-  return value
+  return result
 }
 
 function inlineCell(ref: string, value: unknown, style = 0) {
@@ -32,8 +32,8 @@ function inlineCell(ref: string, value: unknown, style = 0) {
 }
 
 function numberCell(ref: string, value: number, style = 4) {
-  const safeValue = Number.isFinite(value) ? value : 0
-  return `<c r="${ref}" s="${style}"><v>${safeValue}</v></c>`
+  const safe = Number.isFinite(value) ? value : 0
+  return `<c r="${ref}" s="${style}"><v>${safe}</v></c>`
 }
 
 function stylesXml() {
@@ -81,7 +81,11 @@ function worksheetXml({
 }) {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="${NS}">
-  <sheetViews><sheetView workbookViewId="0"><pane ySplit="${freezeRows}" topLeftCell="A${freezeRows + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+  <sheetViews>
+    <sheetView workbookViewId="0">
+      <pane ySplit="${freezeRows}" topLeftCell="A${freezeRows + 1}" activePane="bottomLeft" state="frozen"/>
+    </sheetView>
+  </sheetViews>
   <sheetFormatPr defaultRowHeight="18"/>
   ${cols}
   <sheetData>${rows.join('')}</sheetData>
@@ -97,6 +101,7 @@ function crc32(buffer: Buffer) {
     for (let j = 0; j < 8; j++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1)
     table[i] = c >>> 0
   }
+
   let crc = 0xffffffff
   for (const byte of buffer) crc = table[(crc ^ byte) & 0xff] ^ (crc >>> 8)
   return (crc ^ 0xffffffff) >>> 0
@@ -163,73 +168,124 @@ function zipStore(files: Array<{ name: string; data: Buffer }>) {
   return Buffer.concat([...localParts, central, end])
 }
 
+function formatDate(value: string | null | undefined) {
+  return value ? new Date(value).toLocaleString('es-ES') : '-'
+}
+
+function formatDateOnly(value: string | null | undefined) {
+  return value ? new Date(value).toLocaleDateString('es-ES') : '-'
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url)
-  const month = /^\d{4}-\d{2}$/.test(url.searchParams.get('month') || '')
-    ? url.searchParams.get('month')!
-    : new Date().toISOString().slice(0, 7)
+  const monthParam = url.searchParams.get('month') || new Date().toISOString().slice(0, 7)
 
-  const [year, monthNumber] = month.split('-').map(Number)
+  if (!/^\d{4}-\d{2}$/.test(monthParam)) {
+    return NextResponse.json({ error: 'Mes no válido.' }, { status: 400 })
+  }
+
+  const [year, monthNumber] = monthParam.split('-').map(Number)
   if (!year || monthNumber < 1 || monthNumber > 12) {
     return NextResponse.json({ error: 'Mes no válido.' }, { status: 400 })
   }
 
-  // El Excel usa el mismo mes natural que Tasker: del día 1 al último día del mes.
   const startDate = new Date(Date.UTC(year, monthNumber - 1, 1))
-  const endExclusive = new Date(Date.UTC(year, monthNumber, 1))
-  const monthNames = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+  const endDate = new Date(Date.UTC(year, monthNumber, 1))
+  const startIso = startDate.toISOString()
+  const endIso = endDate.toISOString()
+
+  const monthNames = [
+    'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+  ]
   const periodLabel = `${monthNames[monthNumber - 1]} de ${year}`
-  const cycleLabel = `${startDate.toLocaleDateString('es-ES', { timeZone: 'UTC' })} – ${new Date(endExclusive.getTime() - 86400000).toLocaleDateString('es-ES', { timeZone: 'UTC' })}`
 
-  const { supabase } = await requireRole(['admin', 'auditor'])
+  // requireRole solo valida al usuario. Para el informe usamos el cliente
+  // administrativo del servidor para que RLS no pueda devolver una exportación vacía.
+  await requireRole(['admin', 'auditor'])
+  const db = createAdminClient()
 
-  // Consultamos cada tabla por separado para no depender de cómo PostgREST
-  // representa las relaciones anidadas. Después reconstruimos las relaciones
-  // mediante sus claves foráneas.
   const [
-    { data: tasksRaw, error: tasksError },
-    { data: incidentsRaw, error: incidentsError },
-    { data: usersRaw, error: usersError },
-    { data: centersRaw, error: centersError },
-    { data: recordsRaw, error: recordsError },
+    { data: tasks, error: tasksError },
+    { data: incidents, error: incidentsError },
+    { data: users, error: usersError },
+    { data: centers, error: centersError },
+    { data: records, error: recordsError },
   ] = await Promise.all([
-    supabase
-      .from('tareas')
-      .select('id,nombre,descripcion,estado,fecha_creacion,fecha_cierre,centro_coste_id,incidencia_id')
+    db.from('tareas')
+      .select('id,nombre,descripcion,incidencia_id,estado,fecha_creacion,fecha_cierre,centro_coste_id,eliminado')
       .eq('eliminado', false)
       .order('fecha_creacion', { ascending: true }),
-    supabase
-      .from('incidencias')
-      .select('id,titulo,usuario_id')
+    db.from('incidencias')
+      .select('id,titulo,usuario_id,eliminado')
       .eq('eliminado', false),
-    supabase
-      .from('usuarios')
-      .select('id,nombre,centro_coste_id'),
-    supabase
-      .from('centros_coste')
+    db.from('usuarios')
+      .select('id,nombre,email,centro_coste_id'),
+    db.from('centros_coste')
       .select('id,nombre'),
-    supabase
-      .from('tarea_registros')
-      .select('id,tarea_id,horas,comentario,fecha_creacion,usuario_id')
-      .gte('fecha_creacion', startDate.toISOString())
-      .lt('fecha_creacion', endExclusive.toISOString())
+    db.from('tarea_registros')
+      .select('id,tarea_id,usuario_id,horas,comentario,fecha_creacion')
+      .gte('fecha_creacion', startIso)
+      .lt('fecha_creacion', endIso)
       .order('fecha_creacion', { ascending: true }),
   ])
 
   const firstError = tasksError || incidentsError || usersError || centersError || recordsError
-  if (firstError) return NextResponse.json({ error: firstError.message }, { status: 500 })
+  if (firstError) {
+    console.error('Error exportando Tasker:', firstError)
+    return NextResponse.json({ error: firstError.message }, { status: 500 })
+  }
 
-  const tasks = (tasksRaw ?? []) as any[]
-  const incidents = (incidentsRaw ?? []) as any[]
-  const users = (usersRaw ?? []) as any[]
-  const centers = (centersRaw ?? []) as any[]
-  const records = (recordsRaw ?? []) as any[]
+  type Row = {
+    id: number
+    nombre: string
+    descripcion: string | null
+    incidencia_id: number | null
+    estado: string
+    fecha_creacion: string
+    fecha_cierre: string | null
+    centro_coste_id: number | null
+  }
 
-  const incidentById = new Map<number, any>(incidents.map(item => [Number(item.id), item]))
-  const userById = new Map<number, any>(users.map(item => [Number(item.id), item]))
-  const centerById = new Map<number, string>(centers.map(item => [Number(item.id), item.nombre]))
-  const recordsByTask = new Map<number, any[]>()
-  for (const record of records) {
+  type Incident = {
+    id: number
+    titulo: string
+    usuario_id: number | null
+  }
+
+  type User = {
+    id: number
+    nombre: string
+    email: string | null
+    centro_coste_id: number | null
+  }
+
+  type Center = {
+    id: number
+    nombre: string
+  }
+
+  type RecordRow = {
+    id: number
+    tarea_id: number
+    usuario_id: number | null
+    horas: number | string
+    comentario: string | null
+    fecha_creacion: string
+  }
+
+  const taskRows = (tasks ?? []) as unknown as Row[]
+  const incidentRows = (incidents ?? []) as unknown as Incident[]
+  const userRows = (users ?? []) as unknown as User[]
+  const centerRows = (centers ?? []) as unknown as Center[]
+  const recordRows = (records ?? []) as unknown as RecordRow[]
+
+  const incidentById = new Map<number, Incident>(incidentRows.map(item => [Number(item.id), item]))
+  const userById = new Map<number, User>(userRows.map(item => [Number(item.id), item]))
+  const centerById = new Map<number, string>(centerRows.map(item => [Number(item.id), item.nombre]))
+  const recordsByTask = new Map<number, RecordRow[]>()
+
+  for (const record of recordRows) {
     const taskId = Number(record.tarea_id)
     const list = recordsByTask.get(taskId) || []
     list.push(record)
@@ -238,40 +294,61 @@ export async function GET(request: Request) {
 
   const inMonth = (value: string | null | undefined) => {
     if (!value) return false
-    return value >= startDate.toISOString() && value < endExclusive.toISOString()
+    return value >= startIso && value < endIso
   }
 
-  // Una tarea pertenece al reporte si fue creada en el mes, se cerró en el mes
-  // o tiene horas registradas en el mes. Así no desaparecen tareas activas ni
-  // tareas cerradas durante el mes aunque se hayan creado antes.
-  const rows = tasks.filter(task => {
-    const createdInMonth = inMonth(task.fecha_creacion)
-    const closedInMonth = inMonth(task.fecha_cierre)
-    const hasHoursInMonth = (recordsByTask.get(Number(task.id)) || []).length > 0
-    return createdInMonth || closedInMonth || hasHoursInMonth
+  // La tarea entra en el informe si se creó en el mes, se cerró en el mes
+  // o tiene al menos una imputación de horas durante el mes.
+  const includedTasks = taskRows.filter(task => {
+    const hasHours = (recordsByTask.get(Number(task.id)) || []).length > 0
+    return inMonth(task.fecha_creacion) || inMonth(task.fecha_cierre) || hasHours
   })
 
   let totalHours = 0
   const hoursByCenter = new Map<string, number>()
-  const taskData = rows.map(task => {
-    const incident = incidentById.get(Number(task.incidencia_id))
-    const creator = incident ? userById.get(Number(incident.usuario_id)) : null
-    const userCenterId = creator?.centro_coste_id ? Number(creator.centro_coste_id) : null
-    const taskCenterId = task.centro_coste_id ? Number(task.centro_coste_id) : null
-    const centerId = userCenterId || taskCenterId
-    const center = (centerId ? centerById.get(centerId) : null) || 'Sin asignar'
-    const creatorName = creator?.nombre || 'Sin asignar'
+
+  const reportRows = includedTasks.map(task => {
+    const incident = task.incidencia_id ? incidentById.get(Number(task.incidencia_id)) : undefined
+    const assignedUser = incident?.usuario_id ? userById.get(Number(incident.usuario_id)) : undefined
+
+    // La tarea manda sobre el centro de coste: permite que un administrador
+    // lo cambie manualmente. En tareas automáticas, si está vacío, heredamos
+    // el centro del usuario que abrió la incidencia.
+    const explicitCenterId = task.centro_coste_id ? Number(task.centro_coste_id) : null
+    const inheritedCenterId = assignedUser?.centro_coste_id ? Number(assignedUser.centro_coste_id) : null
+    const centerId = explicitCenterId ?? inheritedCenterId
+    const centerName = centerId ? (centerById.get(centerId) || 'Sin asignar') : 'Sin asignar'
+    const userName = assignedUser?.nombre || 'Sin asignar'
+
     const taskRecords = recordsByTask.get(Number(task.id)) || []
-    const hours = taskRecords.reduce((sum: number, record: any) => sum + Number(record.horas || 0), 0)
+    const hours = taskRecords.reduce((sum, record) => sum + Number(record.horas || 0), 0)
+
     totalHours += hours
-    hoursByCenter.set(center, (hoursByCenter.get(center) || 0) + hours)
-    return { task, incident, creator, center, creatorName, records: taskRecords, hours }
+    hoursByCenter.set(centerName, (hoursByCenter.get(centerName) || 0) + hours)
+
+    const workLog = taskRecords.length
+      ? taskRecords.map(record => {
+          const recordUser = record.usuario_id ? userById.get(Number(record.usuario_id)) : undefined
+          const name = recordUser?.nombre || 'Usuario sin nombre'
+          const comment = record.comentario ? ` · ${record.comentario}` : ''
+          return `${formatDateOnly(record.fecha_creacion)} · ${name} · ${Number(record.horas).toFixed(2)} h${comment}`
+        }).join(' | ')
+      : 'Sin registros de horas'
+
+    return {
+      task,
+      incident,
+      userName,
+      centerName,
+      hours,
+      workLog,
+    }
   })
 
   const summaryRows: string[] = [
     '<row r="1" ht="34"><c r="A1" s="2" t="inlineStr"><is><t>REBIOS SL · REPORTE DE TAREAS</t></is></c><c r="B1" s="2"/><c r="C1" s="2"/><c r="D1" s="2"/></row>',
-    `<row r="2">${inlineCell('A2', 'Periodo de trabajo', 3)}${inlineCell('B2', cycleLabel)}${inlineCell('C2', 'Mes de reporte', 3)}${inlineCell('D2', periodLabel)}</row>`,
-    `<row r="3">${inlineCell('A3', 'Tareas incluidas', 3)}${numberCell('B3', taskData.length)}${inlineCell('C3', 'Total horas', 3)}${numberCell('D3', totalHours)}</row>`,
+    `<row r="2">${inlineCell('A2', 'Periodo', 3)}${inlineCell('B2', periodLabel)}${inlineCell('C2', 'Fechas', 3)}${inlineCell('D2', `${formatDateOnly(startIso)} – ${formatDateOnly(new Date(endDate.getTime() - 86400000).toISOString())}`)}</row>`,
+    `<row r="3">${inlineCell('A3', 'Tareas incluidas', 3)}${numberCell('B3', reportRows.length)}${inlineCell('C3', 'Total horas', 3)}${numberCell('D3', totalHours)}</row>`,
     '<row r="5"><c r="A5" s="1" t="inlineStr"><is><t>CENTRO DE COSTE</t></is></c><c r="B5" s="1" t="inlineStr"><is><t>HORAS</t></is></c></row>',
   ]
 
@@ -282,45 +359,129 @@ export async function GET(request: Request) {
   }
 
   const detailRows: string[] = [
-    '<row r="1" ht="34"><c r="A1" s="2" t="inlineStr"><is><t>REPORTE DETALLADO DE TAREAS</t></is></c></row>',
+    '<row r="1" ht="34"><c r="A1" s="2" t="inlineStr"><is><t>REPORTE DETALLADO DE TAREAS</t></is></c><c r="B1" s="2"/><c r="C1" s="2"/><c r="D1" s="2"/><c r="E1" s="2"/><c r="F1" s="2"/><c r="G1" s="2"/><c r="H1" s="2"/><c r="I1" s="2"/></row>',
     `<row r="2">${inlineCell('A2', 'Periodo', 3)}${inlineCell('B2', periodLabel, 3)}</row>`,
-    '<row r="4">' + ['FECHA','TAREA','USUARIO ASIGNADO','CENTRO DE COSTE','HORAS','ESTADO','INCIDENCIA','DESCRIPCIÓN','REGISTRO DE TRABAJO'].map((header, index) => inlineCell(`${colLetter(index + 1)}4`, header, 1)).join('') + '</row>',
+    '<row r="4">' + ['TAREA','USUARIO ASIGNADO','CENTRO DE COSTE','Nº DE HORAS','ESTADO','INCIDENCIA','FECHA CREACIÓN','FECHA CIERRE','DESCRIPCIÓN / TRABAJO'].map((header, index) => inlineCell(`${colLetter(index + 1)}4`, header, 1)).join('') + '</row>',
   ]
 
-  let rowNumber = 5
-  for (const item of taskData) {
-    const { task, incident, creatorName, center, records: taskRecords, hours } = item
-    const work = taskRecords.length
-      ? taskRecords.map((record: any) => `${new Date(record.fecha_creacion).toLocaleDateString('es-ES')} · ${Number(record.horas || 0).toFixed(2)} h${record.comentario ? ` · ${record.comentario}` : ''}`).join(' | ')
-      : 'Sin registros detallados'
+  let detailRow = 5
+  for (const item of reportRows) {
+    const incidenceText = item.incident
+      ? `#INC-${String(item.incident.id).padStart(3, '0')} · ${item.incident.titulo}`
+      : 'Sin incidencia'
 
-    detailRows.push(`<row r="${rowNumber}">${inlineCell(`A${rowNumber}`, task.fecha_creacion ? new Date(task.fecha_creacion).toLocaleString('es-ES') : '-')}${inlineCell(`B${rowNumber}`, task.nombre)}${inlineCell(`C${rowNumber}`, creatorName)}${inlineCell(`D${rowNumber}`, center)}${numberCell(`E${rowNumber}`, hours)}${inlineCell(`F${rowNumber}`, task.estado)}${inlineCell(`G${rowNumber}`, incident ? `#INC-${String(incident.id).padStart(3, '0')} · ${incident.titulo || ''}` : '—')}${inlineCell(`H${rowNumber}`, task.descripcion || '')}${inlineCell(`I${rowNumber}`, work)}</row>`)
-    rowNumber++
+    const description = item.task.descripcion || ''
+    const work = description && item.workLog !== 'Sin registros de horas'
+      ? `${description} | ${item.workLog}`
+      : description || item.workLog
+
+    detailRows.push(
+      `<row r="${detailRow}">` +
+      `${inlineCell(`A${detailRow}`, item.task.nombre)}` +
+      `${inlineCell(`B${detailRow}`, item.userName)}` +
+      `${inlineCell(`C${detailRow}`, item.centerName)}` +
+      `${numberCell(`D${detailRow}`, item.hours)}` +
+      `${inlineCell(`E${detailRow}`, item.task.estado)}` +
+      `${inlineCell(`F${detailRow}`, incidenceText)}` +
+      `${inlineCell(`G${detailRow}`, formatDate(item.task.fecha_creacion))}` +
+      `${inlineCell(`H${detailRow}`, formatDate(item.task.fecha_cierre))}` +
+      `${inlineCell(`I${detailRow}`, work)}` +
+      '</row>',
+    )
+    detailRow++
   }
 
-  detailRows.push(`<row r="${rowNumber}" ht="24">${inlineCell(`A${rowNumber}`, '')}${inlineCell(`B${rowNumber}`, '')}${inlineCell(`C${rowNumber}`, '')}${inlineCell(`D${rowNumber}`, 'TOTAL', 1)}${numberCell(`E${rowNumber}`, totalHours)}${inlineCell(`F${rowNumber}`, '')}${inlineCell(`G${rowNumber}`, '')}${inlineCell(`H${rowNumber}`, '')}${inlineCell(`I${rowNumber}`, '', 1)}</row>`)
+  detailRows.push(
+    `<row r="${detailRow}" ht="24">` +
+    `${inlineCell(`A${detailRow}`, '')}` +
+    `${inlineCell(`B${detailRow}`, '')}` +
+    `${inlineCell(`C${detailRow}`, 'TOTAL', 1)}` +
+    `${numberCell(`D${detailRow}`, totalHours)}` +
+    `${inlineCell(`E${detailRow}`, '')}` +
+    `${inlineCell(`F${detailRow}`, '')}` +
+    `${inlineCell(`G${detailRow}`, '')}` +
+    `${inlineCell(`H${detailRow}`, '')}` +
+    `${inlineCell(`I${detailRow}`, '')}` +
+    '</row>',
+  )
 
-  const summaryCols = '<cols><col min="1" max="1" width="28" customWidth="1"/><col min="2" max="2" width="18" customWidth="1"/><col min="3" max="3" width="20" customWidth="1"/><col min="4" max="4" width="22" customWidth="1"/></cols>'
-  const detailCols = '<cols><col min="1" max="1" width="20" customWidth="1"/><col min="2" max="2" width="34" customWidth="1"/><col min="3" max="3" width="30" customWidth="1"/><col min="4" max="4" width="24" customWidth="1"/><col min="5" max="5" width="14" customWidth="1"/><col min="6" max="6" width="14" customWidth="1"/><col min="7" max="7" width="34" customWidth="1"/><col min="8" max="42" width="42" customWidth="1"/><col min="9" max="9" width="70" customWidth="1"/></cols>'
+  const summaryCols = '<cols><col min="1" max="1" width="28" customWidth="1"/><col min="2" max="2" width="18" customWidth="1"/><col min="3" max="3" width="20" customWidth="1"/><col min="4" max="4" width="28" customWidth="1"/></cols>'
+  const detailCols = '<cols><col min="1" max="1" width="36" customWidth="1"/><col min="2" max="2" width="30" customWidth="1"/><col min="3" max="3" width="24" customWidth="1"/><col min="4" max="4" width="14" customWidth="1"/><col min="5" max="5" width="14" customWidth="1"/><col min="6" max="6" width="38" customWidth="1"/><col min="7" max="8" width="20" customWidth="1"/><col min="9" max="9" width="72" customWidth="1"/></cols>'
 
-  const summarySheet = worksheetXml({ cols: summaryCols, rows: summaryRows, freezeRows: 5, merges: ['A1:D1'] })
-  const detailSheet = worksheetXml({ cols: detailCols, rows: detailRows, freezeRows: 4, autoFilter: `A4:I${Math.max(4, rowNumber - 1)}`, merges: ['A1:I1'] })
+  const summarySheet = worksheetXml({
+    cols: summaryCols,
+    rows: summaryRows,
+    freezeRows: 5,
+    merges: ['A1:D1'],
+  })
 
-  const files = [
-    { name: '[Content_Types].xml', data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`, 'utf8') },
-    { name: '_rels/.rels', data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`, 'utf8') },
-    { name: 'xl/workbook.xml', data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="${NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Resumen" sheetId="1" r:id="rId1"/><sheet name="Detalle" sheetId="2" r:id="rId2"/></sheets></workbook>`, 'utf8') },
-    { name: 'xl/_rels/workbook.xml.rels', data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`, 'utf8') },
+  const detailSheet = worksheetXml({
+    cols: detailCols,
+    rows: detailRows,
+    freezeRows: 4,
+    autoFilter: `A4:I${Math.max(4, detailRow - 1)}`,
+    merges: ['A1:I1'],
+  })
+
+  const workbookFiles = [
+    {
+      name: '[Content_Types].xml',
+      data: Buffer.from(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+        `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+        `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+        `<Default Extension="xml" ContentType="application/xml"/>` +
+        `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+        `<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` +
+        `<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` +
+        `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` +
+        `</Types>`,
+        'utf8',
+      ),
+    },
+    {
+      name: '_rels/.rels',
+      data: Buffer.from(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+        `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+        `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>` +
+        `</Relationships>`,
+        'utf8',
+      ),
+    },
+    {
+      name: 'xl/workbook.xml',
+      data: Buffer.from(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+        `<workbook xmlns="${NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+        `<sheets><sheet name="Resumen" sheetId="1" r:id="rId1"/><sheet name="Detalle" sheetId="2" r:id="rId2"/></sheets>` +
+        `</workbook>`,
+        'utf8',
+      ),
+    },
+    {
+      name: 'xl/_rels/workbook.xml.rels',
+      data: Buffer.from(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+        `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+        `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>` +
+        `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>` +
+        `<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
+        `</Relationships>`,
+        'utf8',
+      ),
+    },
     { name: 'xl/styles.xml', data: Buffer.from(stylesXml(), 'utf8') },
     { name: 'xl/worksheets/sheet1.xml', data: Buffer.from(summarySheet, 'utf8') },
     { name: 'xl/worksheets/sheet2.xml', data: Buffer.from(detailSheet, 'utf8') },
   ]
 
-  const workbook = zipStore(files)
+  const workbook = zipStore(workbookFiles)
+
   return new NextResponse(new Uint8Array(workbook), {
     headers: {
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': `attachment; filename="reporte_tasker_${month}.xlsx"`,
+      'Content-Disposition': `attachment; filename="reporte_tasker_${monthParam}.xlsx"`,
       'Cache-Control': 'no-store',
     },
   })
