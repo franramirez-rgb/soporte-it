@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireRole } from '@/lib/auth'
-import { oneRelation } from '@/lib/supabase/relations'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 export const runtime = 'nodejs'
 
@@ -181,39 +181,83 @@ export async function GET(request: Request) {
   const periodLabel = `${monthNames[monthNumber - 1]} de ${year}`
   const cycleLabel = `${startDate.toLocaleDateString('es-ES', { timeZone: 'UTC' })} – ${new Date(endExclusive.getTime() - 86400000).toLocaleDateString('es-ES', { timeZone: 'UTC' })}`
 
-  const { supabase } = await requireRole(['admin', 'auditor'])
-  const { data: tasks, error } = await supabase
-    .from('tareas')
-    .select('id,nombre,descripcion,estado,fecha_creacion,fecha_cierre,centro_coste_id,centros:centro_coste_id(nombre),incidencia_id,incidencias:incidencia_id(titulo,usuario_id,usuarios:usuario_id(nombre,centro_coste_id,centros:centro_coste_id(nombre))),tarea_registros(id,horas,comentario,fecha_creacion,usuario_id,usuarios:usuario_id(nombre))')
-    .eq('eliminado', false)
-    .order('fecha_creacion', { ascending: true })
+  await requireRole(['admin', 'auditor'])
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  // Para la exportación no usamos relaciones embebidas de PostgREST.
+  // En este proyecto Supabase puede devolver algunas relaciones como arrays
+  // y, además, una relación anidada a tarea_registros puede quedar vacía por
+  // RLS aunque la consulta directa a esa tabla sí tenga datos. Eso hacía que
+  // el Excel calculase 0 tareas aunque Tasker mostrase tareas y horas.
+  // Consultamos cada tabla explícitamente y unimos los datos por sus FK.
+  const admin = createAdminClient()
+  const [tasksResult, recordsResult, incidentsResult, usersResult, centersResult] = await Promise.all([
+    admin
+      .from('tareas')
+      .select('id,nombre,descripcion,estado,fecha_creacion,fecha_cierre,centro_coste_id,incidencia_id')
+      .eq('eliminado', false)
+      .order('fecha_creacion', { ascending: true }),
+    admin
+      .from('tarea_registros')
+      .select('id,tarea_id,horas,comentario,fecha_creacion,usuario_id')
+      .gte('fecha_creacion', startDate.toISOString())
+      .lt('fecha_creacion', endExclusive.toISOString())
+      .order('fecha_creacion', { ascending: true }),
+    admin
+      .from('incidencias')
+      .select('id,titulo,usuario_id')
+      .eq('eliminado', false),
+    admin
+      .from('usuarios')
+      .select('id,nombre,centro_coste_id'),
+    admin
+      .from('centros_coste')
+      .select('id,nombre'),
+  ])
 
-  // Incluimos las tareas cerradas dentro del ciclo legacy y también las tareas
-  // que tienen horas registradas durante el ciclo. Así el Excel coincide con
-  // lo que se ve en Tasker y no queda vacío cuando las tareas siguen abiertas.
-  const rows = ((tasks ?? []) as any[]).filter((task: any) => {
+  const firstError = tasksResult.error || recordsResult.error || incidentsResult.error || usersResult.error || centersResult.error
+  if (firstError) return NextResponse.json({ error: firstError.message }, { status: 500 })
+
+  const tasks = (tasksResult.data ?? []) as any[]
+  const records = (recordsResult.data ?? []) as any[]
+  const incidents = (incidentsResult.data ?? []) as any[]
+  const users = (usersResult.data ?? []) as any[]
+  const centers = (centersResult.data ?? []) as any[]
+
+  const incidentById = new Map<number, any>(incidents.map(item => [item.id, item]))
+  const userById = new Map<number, any>(users.map(item => [item.id, item]))
+  const centerById = new Map<number, any>(centers.map(item => [item.id, item]))
+  const recordsByTask = new Map<number, any[]>()
+  for (const record of records) {
+    const list = recordsByTask.get(record.tarea_id) || []
+    list.push(record)
+    recordsByTask.set(record.tarea_id, list)
+  }
+
+  // Una tarea pertenece al informe si se creó durante el ciclo, se cerró
+  // durante el ciclo o tiene horas registradas durante el ciclo. Esto permite
+  // que también aparezcan en Excel las tareas abiertas aunque tengan 0 horas.
+  const rows = tasks.filter((task: any) => {
+    const createdInCycle = task.fecha_creacion
+      && task.fecha_creacion >= startDate.toISOString()
+      && task.fecha_creacion < endExclusive.toISOString()
     const closedInCycle = task.estado === 'cerrada' && task.fecha_cierre
       && task.fecha_cierre >= startDate.toISOString()
       && task.fecha_cierre < endExclusive.toISOString()
-    const hasHoursInCycle = (task.tarea_registros ?? []).some((record: any) => {
-      const created = record.fecha_creacion
-      return created && created >= startDate.toISOString() && created < endExclusive.toISOString()
-    })
-    return Boolean(closedInCycle || hasHoursInCycle)
+    const hasHoursInCycle = (recordsByTask.get(task.id) || []).length > 0
+    return Boolean(createdInCycle || closedInCycle || hasHoursInCycle)
   })
 
   const hoursByCenter = new Map<string, number>()
   let totalHours = 0
 
   for (const task of rows) {
-    const hours = (task.tarea_registros ?? []).filter((record: any) => record.fecha_creacion >= startDate.toISOString() && record.fecha_creacion < endExclusive.toISOString()).reduce((sum: number, record: any) => sum + Number(record.horas), 0)
-    const incident = oneRelation(task.incidencias)
-    const creator = oneRelation(incident?.usuarios)
-    const creatorCenter = oneRelation(creator?.centros)
-    const taskCenter = oneRelation(task.centros)
+    const taskRecords = recordsByTask.get(task.id) || []
+    const incident = task.incidencia_id ? incidentById.get(task.incidencia_id) : null
+    const creator = incident?.usuario_id ? userById.get(incident.usuario_id) : null
+    const creatorCenter = creator?.centro_coste_id ? centerById.get(creator.centro_coste_id) : null
+    const taskCenter = task.centro_coste_id ? centerById.get(task.centro_coste_id) : null
     const center = creatorCenter?.nombre || taskCenter?.nombre || 'Sin Asignar'
+    const hours = taskRecords.reduce((sum: number, record: any) => sum + Number(record.horas || 0), 0)
     totalHours += hours
     hoursByCenter.set(center, (hoursByCenter.get(center) || 0) + hours)
   }
@@ -239,16 +283,16 @@ export async function GET(request: Request) {
 
   let rowNumber = 5
   for (const task of rows) {
-    const records = (task.tarea_registros ?? []).filter((record: any) => record.fecha_creacion >= startDate.toISOString() && record.fecha_creacion < endExclusive.toISOString())
-    const incident = oneRelation(task.incidencias)
-    const creator = oneRelation(incident?.usuarios)
-    const creatorCenter = oneRelation(creator?.centros)
-    const taskCenter = oneRelation(task.centros)
+    const taskRecords = recordsByTask.get(task.id) || []
+    const incident = task.incidencia_id ? incidentById.get(task.incidencia_id) : null
+    const creator = incident?.usuario_id ? userById.get(incident.usuario_id) : null
+    const creatorCenter = creator?.centro_coste_id ? centerById.get(creator.centro_coste_id) : null
+    const taskCenter = task.centro_coste_id ? centerById.get(task.centro_coste_id) : null
     const center = creatorCenter?.nombre || taskCenter?.nombre || 'Sin Asignar'
     const creatorName = creator?.nombre || '—'
-    const hours = records.reduce((sum: number, record: any) => sum + Number(record.horas), 0)
-    const work = records.length
-      ? records.map((record: any) => `${new Date(record.fecha_creacion).toLocaleDateString('es-ES')} · ${oneRelation(record.usuarios)?.nombre || `Usuario #${record.usuario_id}`} · ${Number(record.horas).toFixed(2)} h · ${record.comentario}`).join(' | ')
+    const hours = taskRecords.reduce((sum: number, record: any) => sum + Number(record.horas || 0), 0)
+    const work = taskRecords.length
+      ? taskRecords.map((record: any) => `${new Date(record.fecha_creacion).toLocaleDateString('es-ES')} · ${userById.get(record.usuario_id)?.nombre || `Usuario #${record.usuario_id}`} · ${Number(record.horas || 0).toFixed(2)} h · ${record.comentario || ''}`).join(' | ')
       : 'Sin registros detallados'
 
     detailRows.push(`<row r="${rowNumber}">${inlineCell(`A${rowNumber}`, task.fecha_creacion ? new Date(task.fecha_creacion).toLocaleString('es-ES') : '-')}${inlineCell(`B${rowNumber}`, task.fecha_cierre ? new Date(task.fecha_cierre).toLocaleString('es-ES') : '-')}${inlineCell(`C${rowNumber}`, task.estado)}${inlineCell(`D${rowNumber}`, task.nombre)}${inlineCell(`E${rowNumber}`, task.descripcion || '')}${inlineCell(`F${rowNumber}`, center)}${inlineCell(`G${rowNumber}`, creatorName)}${numberCell(`H${rowNumber}`, hours)}${inlineCell(`I${rowNumber}`, work)}</row>`)
