@@ -162,7 +162,7 @@ function zipStore(files: Array<{ name: string; data: Buffer }>) {
   return Buffer.concat([...localParts, central, end])
 }
 
-export default async function GET(request: Request) {
+export async function GET(request: Request) {
   const url = new URL(request.url)
   const month = /^\d{4}-\d{2}$/.test(url.searchParams.get('month') || '')
     ? url.searchParams.get('month')!
