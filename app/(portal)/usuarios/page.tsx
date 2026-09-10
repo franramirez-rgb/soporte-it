@@ -1,5 +1,6 @@
 import Link from 'next/link'
-import { approveUser, createUserManual, importUsersCsv, inviteExistingUser, rejectUser, updateUser } from '@/app/actions'
+import { approveUser, createUserManual, deleteUser, importUsersCsv, inviteExistingUser, rejectUser, updateUser } from '@/app/actions'
+import { DeleteUserButton } from '@/components/delete-user-button'
 import { requireRole } from '@/lib/auth'
 
 export default async function Usuarios({ searchParams }: { searchParams: Promise<{ page?: string; editar?: string }> }) {
@@ -53,7 +54,7 @@ export default async function Usuarios({ searchParams }: { searchParams: Promise
       {users.map(user => <tr key={user.id}>
         <td><strong>{user.nombre}</strong><div className="small muted">{user.email}</div><div className="small muted">{user.puesto || 'Sin puesto'}{user.departamento ? ` · ${user.departamento}` : ''}</div></td><td><span className="badge slate">{user.rol}</span></td><td>{user.centros?.[0]?.nombre || '—'}</td>
         <td><span className={`badge ${user.estado_cuenta === 'activo' ? 'green' : user.estado_cuenta === 'pendiente' ? 'amber' : 'slate'}`}>{user.estado_cuenta}</span></td><td>{user.auth_user_id ? <span className="badge green">vinculado</span> : <span className="badge amber">sin acceso</span>}</td>
-        <td>{admin && <div className="row-actions"><Link className="btn btn-secondary btn-sm" href={query(page, user.id)}>Editar</Link>{user.estado_cuenta === 'pendiente' && <><form action={approveUser.bind(null, user.id)}><button className="btn btn-success btn-sm">Autorizar</button></form><form action={rejectUser.bind(null, user.id)}><button className="btn btn-danger btn-sm">Rechazar</button></form></>}{!user.auth_user_id && <form action={inviteExistingUser.bind(null, user.id)}><button className="btn btn-primary btn-sm">Invitar</button></form>}</div>}</td>
+        <td>{admin && <div className="row-actions"><Link className="btn btn-secondary btn-sm" href={query(page, user.id)}>Editar</Link>{user.estado_cuenta === 'pendiente' && <><form action={approveUser.bind(null, user.id)}><button className="btn btn-success btn-sm">Autorizar</button></form><form action={rejectUser.bind(null, user.id)}><button className="btn btn-danger btn-sm">Rechazar</button></form></>}{!user.auth_user_id && <form action={inviteExistingUser.bind(null, user.id)}><button className="btn btn-primary btn-sm">Invitar</button></form>}{user.id !== profile.id && <DeleteUserButton action={deleteUser.bind(null, user.id)} userName={user.nombre} />}</div>}</td>
       </tr>)}
     </tbody></table>{!users.length && <div className="empty">No hay usuarios.</div>}</div></div>
 

@@ -449,6 +449,40 @@ export async function rejectUser(id: number) {
   revalidatePath('/usuarios')
 }
 
+export async function deleteUser(id: number) {
+  const { admin, profile, user } = await ctx()
+  if (profile.rol !== 'admin') return
+  if (!Number.isInteger(id) || id <= 0) return
+  if (id === profile.id) throw new Error('No puedes eliminar tu propia cuenta de administrador.')
+
+  const { data: target, error: targetError } = await admin
+    .from('usuarios')
+    .select('id,auth_user_id,nombre,email')
+    .eq('id', id)
+    .single()
+
+  if (targetError || !target) throw new Error('Usuario no encontrado.')
+  if (target.auth_user_id === user.id) throw new Error('No puedes eliminar tu propia cuenta de administrador.')
+
+  // Primero eliminamos la identidad de Supabase Auth. Después borramos
+  // el perfil de aplicación; sus relaciones dependientes se resuelven
+  // según las FK configuradas en la base de datos.
+  if (target.auth_user_id) {
+    const { error: authDeleteError } = await admin.auth.admin.deleteUser(target.auth_user_id, false)
+    if (authDeleteError) throw new Error(`No se pudo eliminar la cuenta de acceso: ${authDeleteError.message}`)
+  }
+
+  const { error: profileDeleteError } = await admin.from('usuarios').delete().eq('id', id)
+  if (profileDeleteError) throw new Error(`No se pudo eliminar el usuario: ${profileDeleteError.message}`)
+
+  revalidatePath('/usuarios')
+  revalidatePath('/tickets')
+  revalidatePath('/dashboard')
+  revalidatePath('/tasker')
+  revalidatePath('/material')
+  revalidatePath('/papelera')
+}
+
 export async function updateUser(formData: FormData) {
   const { admin, profile } = await ctx()
   if (profile.rol !== 'admin') return
