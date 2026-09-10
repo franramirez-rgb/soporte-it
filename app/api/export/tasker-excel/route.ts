@@ -75,40 +75,40 @@ export async function GET(request: Request) {
     })
     sheet.columns = [
       { key: 'created', width: 18 }, { key: 'task', width: 34 }, { key: 'assigned', width: 24 }, { key: 'center', width: 24 }, { key: 'total', width: 16 },
-      { key: 'title', width: 38 }, { key: 'recordDate', width: 20 }, { key: 'recordUser', width: 24 }, { key: 'recordHours', width: 16 }, { key: 'work', width: 55 },
+      { key: 'title', width: 38 }, { key: 'recordHours', width: 16 }, { key: 'work', width: 55 },
     ]
-    sheet.mergeCells('A1:J1')
+    sheet.mergeCells('A1:H1')
     const title = sheet.getCell('A1')
     title.value = 'REBIOS SL · REPORTE DE HORAS TASKER'
     title.font = { name: 'Calibri', size: 16, bold: true, color: { argb: 'FFFFFFFF' } }
     title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } }
     title.alignment = { horizontal: 'left', vertical: 'middle' }
     sheet.getRow(1).height = 30
-    sheet.getCell('A2').value = 'Periodo'; sheet.getCell('B2').value = period; sheet.getCell('D2').value = 'Tareas cerradas'; sheet.getCell('E2').value = details.length; sheet.getCell('G2').value = 'Total horas'; sheet.getCell('H2').value = totalHours
-    for (const cell of ['A2','B2','D2','E2','G2','H2']) {
+    sheet.getCell('A2').value = 'Periodo'; sheet.getCell('B2').value = period; sheet.getCell('D2').value = 'Tareas cerradas'; sheet.getCell('E2').value = details.length; sheet.getCell('F2').value = 'Total horas'; sheet.getCell('G2').value = totalHours
+    for (const cell of ['A2','B2','D2','E2','F2','G2']) {
       sheet.getCell(cell).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9EEF5' } }
       sheet.getCell(cell).border = { top: { style: 'thin', color: { argb: 'FFD0D7DE' } }, bottom: { style: 'thin', color: { argb: 'FFD0D7DE' } }, left: { style: 'thin', color: { argb: 'FFD0D7DE' } }, right: { style: 'thin', color: { argb: 'FFD0D7DE' } } }
       sheet.getCell(cell).alignment = { vertical: 'middle' }
     }
-    for (const cell of ['A2','D2','G2']) sheet.getCell(cell).font = { bold: true }
-    sheet.getCell('E2').numFmt = '0'; sheet.getCell('H2').numFmt = '0.00'; sheet.getRow(2).height = 22
+    for (const cell of ['A2','D2','F2']) sheet.getCell(cell).font = { bold: true }
+    sheet.getCell('E2').numFmt = '0'; sheet.getCell('G2').numFmt = '0.00'; sheet.getRow(2).height = 22
     sheet.addRow([])
-    const header = sheet.addRow(['Fecha de creación','Nombre de la tarea','Usuario asignado','Centro de coste','Nº horas total','Título','Fecha imputación','Usuario que imputó','Horas imputadas','Trabajo realizado'])
+    const header = sheet.addRow(['Fecha de creación','Nombre de la tarea','Usuario asignado','Centro de coste','Nº horas total','Título','Horas imputadas','Trabajo realizado'])
     header.height = 34
     header.eachCell(cell => { cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } }; cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; cell.border = { top: { style: 'thin', color: { argb: 'FFC8D0DA' } }, bottom: { style: 'thin', color: { argb: 'FFC8D0DA' } }, left: { style: 'thin', color: { argb: 'FFC8D0DA' } }, right: { style: 'thin', color: { argb: 'FFC8D0DA' } } } })
     for (const detail of details) {
       detail.taskRecords.forEach((record, index) => {
-        const row = sheet.addRow([index === 0 ? date(detail.task.fecha_creacion) : '', index === 0 ? detail.task.nombre : '', index === 0 ? detail.creator?.nombre || 'Sin asignar' : '', index === 0 ? detail.centerName : '', index === 0 ? detail.hours : '', index === 0 ? detail.incident?.titulo || detail.task.descripcion || '' : '', date(record.fecha_creacion), userById.get(record.usuario_id) || `Usuario #${record.usuario_id}`, Number(record.horas), record.comentario || 'Sin comentario'])
+        const row = sheet.addRow([index === 0 ? date(detail.task.fecha_creacion) : '', index === 0 ? detail.task.nombre : '', index === 0 ? detail.creator?.nombre || 'Sin asignar' : '', index === 0 ? detail.centerName : '', index === 0 ? detail.hours : '', index === 0 ? detail.incident?.titulo || detail.task.descripcion || '' : '', Number(record.horas), record.comentario || 'Sin comentario'])
         row.height = 30
         row.eachCell(cell => { cell.alignment = { vertical: 'top', wrapText: true }; cell.border = { top: { style: 'thin', color: { argb: 'FFD7DDE5' } }, bottom: { style: 'thin', color: { argb: 'FFD7DDE5' } }, left: { style: 'thin', color: { argb: 'FFD7DDE5' } }, right: { style: 'thin', color: { argb: 'FFD7DDE5' } } } })
         if (row.number % 2 === 0) row.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F7FA' } } })
-        row.getCell(5).numFmt = '0.00'; row.getCell(9).numFmt = '0.00'; row.getCell(5).alignment = { horizontal: 'right', vertical: 'top' }; row.getCell(9).alignment = { horizontal: 'right', vertical: 'top' }
+        row.getCell(5).numFmt = '0.00'; row.getCell(7).numFmt = '0.00'; row.getCell(5).alignment = { horizontal: 'right', vertical: 'top' }; row.getCell(7).alignment = { horizontal: 'right', vertical: 'top' }
       })
     }
     const totalRow = sheet.addRow([]); totalRow.height = 24; totalRow.getCell(1).value = 'TOTAL'; totalRow.getCell(1).font = { bold: true }; totalRow.getCell(5).value = totalHours; totalRow.getCell(5).numFmt = '0.00'; totalRow.getCell(5).font = { bold: true }
-    for (let col = 1; col <= 10; col++) { const cell = totalRow.getCell(col); cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9EEF5' } }; cell.border = { top: { style: 'thin', color: { argb: 'FFC8D0DA' } }, bottom: { style: 'thin', color: { argb: 'FFC8D0DA' } }, left: { style: 'thin', color: { argb: 'FFC8D0DA' } }, right: { style: 'thin', color: { argb: 'FFC8D0DA' } } } }
+    for (let col = 1; col <= 8; col++) { const cell = totalRow.getCell(col); cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9EEF5' } }; cell.border = { top: { style: 'thin', color: { argb: 'FFC8D0DA' } }, bottom: { style: 'thin', color: { argb: 'FFC8D0DA' } }, left: { style: 'thin', color: { argb: 'FFC8D0DE' } }, right: { style: 'thin', color: { argb: 'FFC8D0DE' } } } }
     totalRow.getCell(5).alignment = { horizontal: 'right', vertical: 'middle' }
-    const summaryTitleRow = sheet.addRow([]); summaryTitleRow.height = 26; sheet.mergeCells(`A${summaryTitleRow.number}:J${summaryTitleRow.number}`); const summaryTitle = summaryTitleRow.getCell(1); summaryTitle.value = 'DESGLOSE DE HORAS POR CENTRO DE COSTE'; summaryTitle.font = { size: 12, bold: true, color: { argb: 'FFFFFFFF' } }; summaryTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF34495E' } }; summaryTitle.alignment = { vertical: 'middle' }
+    const summaryTitleRow = sheet.addRow([]); summaryTitleRow.height = 26; sheet.mergeCells(`A${summaryTitleRow.number}:H${summaryTitleRow.number}`); const summaryTitle = summaryTitleRow.getCell(1); summaryTitle.value = 'DESGLOSE DE HORAS POR CENTRO DE COSTE'; summaryTitle.font = { size: 12, bold: true, color: { argb: 'FFFFFFFF' } }; summaryTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF34495E' } }; summaryTitle.alignment = { vertical: 'middle' }
     sheet.addRow([])
     const summaryHeader = sheet.addRow(['Centro de coste','Horas']); summaryHeader.height = 26; summaryHeader.getCell(1).font = { bold: true, color: { argb: 'FFFFFFFF' } }; summaryHeader.getCell(2).font = { bold: true, color: { argb: 'FFFFFFFF' } }; summaryHeader.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF34495E' } }; summaryHeader.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF34495E' } }; summaryHeader.getCell(1).alignment = { vertical: 'middle' }; summaryHeader.getCell(2).alignment = { horizontal: 'right', vertical: 'middle' }
     for (const [name, hours] of [...hoursByCenter.entries()].sort((a,b) => a[0].localeCompare(b[0], 'es'))) { const row = sheet.addRow([name, hours]); row.getCell(2).numFmt = '0.00'; row.getCell(2).alignment = { horizontal: 'right' }; row.eachCell(cell => { cell.border = { top: { style: 'thin', color: { argb: 'FFD7DDE5' } }, bottom: { style: 'thin', color: { argb: 'FFD7DDE5' } }, left: { style: 'thin', color: { argb: 'FFD7DDE5' } }, right: { style: 'thin', color: { argb: 'FFD7DDE5' } } } }) }
@@ -116,8 +116,8 @@ export async function GET(request: Request) {
     const headerRowNumber = header.number
     const firstDataRow = headerRowNumber + 1
     const lastDataRow = Math.max(firstDataRow, totalRow.number - 1)
-    sheet.autoFilter = `A${headerRowNumber}:J${lastDataRow}`
-    sheet.pageSetup.printArea = `A1:J${summaryTotal.number}`
+    sheet.autoFilter = `A${headerRowNumber}:H${lastDataRow}`
+    sheet.pageSetup.printArea = `A1:H${summaryTotal.number}`
     sheet.pageSetup.fitToWidth = 1
     sheet.pageSetup.fitToHeight = 0
     const buffer = await workbook.xlsx.writeBuffer()
