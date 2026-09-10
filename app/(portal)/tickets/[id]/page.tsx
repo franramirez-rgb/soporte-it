@@ -26,6 +26,8 @@ export default async function TicketDetail({ params }: { params: Promise<{ id: s
     .eq('incidencia_id', ticket.id)
     .order('fecha_creacion', { ascending: true })
 
+  const messages = messagesRaw ?? []
+
   return <div className="stack">
     <div className="toolbar">
       <div>

@@ -7,6 +7,8 @@ export default async function Usuarios() {
     supabase.from('usuarios').select('id,nombre,email,rol,estado_cuenta,auth_user_id,centros:centro_coste_id(nombre),puesto,departamento,centro_coste_id').order('nombre'),
     supabase.from('centros_coste').select('id,nombre').order('nombre'),
   ])
+  const users = usersRaw ?? []
+  const centers = centersRaw ?? []
   const admin = profile.rol === 'admin'
   return <div className="stack">
     <div className="hero"><div><h1>Usuarios</h1><p>Accesos, roles, departamentos y centros de coste.</p></div><div className="toolbar-right"><span className="badge blue">{users.length} usuarios</span></div></div>
