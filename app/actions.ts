@@ -3,7 +3,6 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import type { User } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
   sendEquipmentAssignedUserEmail,
@@ -486,7 +485,7 @@ export async function importUsersCsv(formData: FormData) {
 
   const { data: centers } = await admin.from('centros_coste').select('id,nombre')
   const { data: existingAuth } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
-  let authUsers: User[] = existingAuth?.users ?? []
+  let authUsers = existingAuth?.users ?? []
   let imported = 0
   let equipmentImported = 0
 
@@ -531,6 +530,7 @@ export async function importUsersCsv(formData: FormData) {
   }
 
   revalidatePath('/usuarios'); revalidatePath('/material')
+  return { imported, equipmentImported }
 }
 
 export async function approveUser(id: number) {
@@ -611,10 +611,6 @@ export async function sendUserInvitation(id: number) {
   if (error) throw new Error(error.message)
   if (invited.user) await admin.from('usuarios').update({ auth_user_id: invited.user.id, rol: user.rol }).eq('id', id)
   revalidatePath('/usuarios')
-}
-
-export async function inviteExistingUser(id: number) {
-  return sendUserInvitation(id)
 }
 
 export async function updateProfile(formData: FormData) {

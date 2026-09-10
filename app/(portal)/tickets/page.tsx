@@ -23,8 +23,7 @@ export default async function Tickets({ searchParams }: { searchParams: Promise<
   if (filtro === 'cerrados') query = query.eq('estado', 'resuelta')
   if (search) query = query.or(`titulo.ilike.%${search}%,descripcion.ilike.%${search}%`)
 
-  const { data: tickets, count = 0 } = await query
-  const safeTickets = tickets ?? []
+  const { data: tickets = [], count = 0 } = await query
   const totalPages = Math.max(1, Math.ceil((count || 0) / pageSize))
   const users = profile.rol === 'admin'
     ? ((await supabase.from('usuarios').select('id,nombre,email').eq('estado_cuenta', 'activo').order('nombre')).data ?? [])
@@ -72,7 +71,7 @@ export default async function Tickets({ searchParams }: { searchParams: Promise<
         <table className="table">
           <thead><tr><th>Código</th><th>Título</th>{(profile.rol === 'admin' || profile.rol === 'auditor') && <th>Empleado</th>}<th>Fecha</th><th>Estado</th><th>Acciones</th></tr></thead>
           <tbody>
-            {safeTickets.map((t: any) => <tr key={t.id}>
+            {tickets.map((t: any) => <tr key={t.id}>
               <td><strong>#INC-{String(t.id).padStart(3, '0')}</strong></td>
               <td><strong>{t.titulo}</strong><div className="small muted">{String(t.descripcion || '').slice(0, 120)}</div></td>
               {(profile.rol === 'admin' || profile.rol === 'auditor') && <td>{t.usuarios?.nombre || '—'}</td>}
@@ -82,7 +81,7 @@ export default async function Tickets({ searchParams }: { searchParams: Promise<
             </tr>)}
           </tbody>
         </table>
-        {!safeTickets.length && <div className="empty">No hay incidencias en esta vista.</div>}
+        {!tickets.length && <div className="empty">No hay incidencias en esta vista.</div>}
       </div>
     </div>
 

@@ -3,13 +3,11 @@ import { requireUser } from '@/lib/auth'
 
 export default async function Perfil() {
   const { supabase, profile } = await requireUser()
-  const { data: equipment } = = await supabase
+  const { data: equipment } = await supabase
     .from('equipos')
     .select('tipo,marca,modelo,identificador,estado_equipo')
     .eq('usuario_id', profile.id)
     .order('tipo')
-
-  const safeEquipment = equipment ?? []
 
   return <div className="stack">
     <div>
@@ -35,8 +33,8 @@ export default async function Perfil() {
 
     <div className="card pad">
       <h2 style={{ marginTop: 0 }}>Material asignado</h2>
-      {safeEquipment.length ? <div className="stack">
-        {safeEquipment.map((e: any) => <div className="message" key={e.identificador}>
+      {equipment.length ? <div className="stack">
+        {equipment.map((e: any) => <div className="message" key={e.identificador}>
           <strong>{String(e.tipo).toUpperCase()} · {e.marca} {e.modelo}</strong>
           <div className="small muted">S/N: {e.identificador} · {e.estado_equipo}</div>
         </div>)}
