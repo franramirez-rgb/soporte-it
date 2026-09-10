@@ -29,7 +29,7 @@ export default async function Tasker({
     { data: editingRaw },
   ] = await Promise.all([
     (() => {
-      let query = supabase.from('tareas').select('id,nombre,descripcion,incidencia_id,estado,fecha_creacion,fecha_cierre,centro_coste_id,centros:centro_coste_id(nombre)', { count: 'exact' }).eq('eliminado', false)
+      let query = supabase.from('tareas').select('id,nombre,descripcion,incidencia_id,estado,fecha_creacion,fecha_cierre,centro_coste_id,centros:centro_coste_id(nombre),incidencias:incidencia_id(titulo,usuarios:usuario_id(nombre))', { count: 'exact' }).eq('eliminado', false)
       query = vista === 'archivo' ? query.eq('estado', 'cerrada') : query.neq('estado', 'cerrada')
       return query.order('fecha_creacion', { ascending: false }).range((page - 1) * pageSize, page * pageSize - 1)
     })(),
@@ -114,10 +114,11 @@ export default async function Tasker({
       <div className="card">
         <div className="table-wrap">
           <table className="table">
-            <thead><tr><th>Tarea</th><th>Incidencia</th><th>Centro</th><th>Horas</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Tarea</th><th>Incidencia</th><th>Creado por</th><th>Centro</th><th>Horas</th><th>Estado</th><th>Acciones</th></tr></thead>
             <tbody>{tasks.map(task => <tr key={task.id}>
               <td><strong>{task.nombre}</strong><div className="small muted truncate">{task.descripcion}</div></td>
               <td>{task.incidencia_id ? `#INC-${String(task.incidencia_id).padStart(3, '0')}` : '—'}</td>
+              <td>{task.incidencias?.[0]?.usuarios?.[0]?.nombre || '—'}</td>
               <td>{task.centros?.[0]?.nombre || 'Sin asignar'}</td>
               <td><strong>{(hoursByTask.get(task.id) || 0).toFixed(2)} h</strong></td>
               <td><span className={`badge ${task.estado === 'cerrada' ? 'green' : 'blue'}`}>{task.estado}</span></td>

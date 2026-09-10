@@ -77,12 +77,12 @@ export default async function Tickets({ searchParams }: { searchParams: Promise<
     <div className="card">
       <div className="table-wrap">
         <table className="table">
-          <thead><tr><th>Código</th><th>Título</th>{(profile.rol === 'admin' || profile.rol === 'auditor') && <th>Empleado</th>}<th>Fecha</th><th>Estado</th><th>Acciones</th></tr></thead>
+          <thead><tr><th>Código</th><th>Título</th><th>Creado por</th><th>Fecha</th><th>Estado</th><th>Acciones</th></tr></thead>
           <tbody>
             {tickets.map((t: any) => <tr key={t.id}>
               <td><strong>#INC-{String(t.id).padStart(3, '0')}</strong></td>
               <td><strong>{t.titulo}</strong><div className="small muted">{String(t.descripcion || '').slice(0, 120)}</div></td>
-              {(profile.rol === 'admin' || profile.rol === 'auditor') && <td>{t.usuarios?.[0]?.nombre || '—'}</td>}
+              <td><strong>{t.usuarios?.[0]?.nombre || '—'}</strong></td>
               <td>{new Date(t.fecha_creacion).toLocaleString('es-ES')}</td>
               <td><span className={`badge ${t.estado === 'abierta' ? 'red' : t.estado === 'en_proceso' ? 'amber' : 'green'}`}>{String(t.estado).replace('_', ' ')}</span></td>
               <td><div className="row-actions"><Link className="btn btn-secondary" href={`/tickets/${t.id}`}>Ver</Link>{vista === 'activos' && profile.rol === 'admin' && <form action={deleteTicket.bind(null, t.id)}><button className="btn btn-danger">Papelera</button></form>}</div></td>

@@ -96,11 +96,23 @@ export async function createTicket(formData: FormData) {
     if (messageError) throw new Error(messageError.message)
   }
 
-  const [taskResult, recipients] = await Promise.all([
-    admin.from('tareas').insert({ nombre: title, descripcion: description, incidencia_id: ticket.id, centro_coste_id: author.centro_coste_id, estado: 'abierta', eliminado: false }),
-    staffRecipients(admin),
-  ])
-  if (taskResult.error) throw new Error(taskResult.error.message)
+  // Cada incidencia crea automáticamente una tarea en Tasker.
+  // El índice único sobre incidencia_id evita duplicados si la acción
+  // se repite accidentalmente.
+  const { error: taskError } = await admin.from('tareas').upsert(
+    {
+      nombre: title,
+      descripcion: description,
+      incidencia_id: ticket.id,
+      centro_coste_id: author.centro_coste_id,
+      estado: 'abierta',
+      eliminado: false,
+    },
+    { onConflict: 'incidencia_id', ignoreDuplicates: true },
+  )
+  if (taskError) throw new Error(taskError.message)
+
+  const recipients = await staffRecipients(admin)
 
   if (recipients.length) {
     await notifyUsers(admin, recipients, 'ticket', `Nueva incidencia #INC-${String(ticket.id).padStart(3, '0')}`, `${author.nombre}: ${title}`, `/tickets/${ticket.id}`)
