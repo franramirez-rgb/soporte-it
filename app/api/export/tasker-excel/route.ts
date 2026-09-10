@@ -39,6 +39,7 @@ export async function GET(request: Request) {
         .from('tareas')
         .select('id,nombre,descripcion,estado,fecha_creacion,fecha_cierre,centro_coste_id,incidencia_id')
         .eq('eliminado', false)
+        .eq('estado', 'cerrada')
         .order('fecha_creacion', { ascending: true }),
       admin
         .from('tarea_registros')
@@ -54,11 +55,16 @@ export async function GET(request: Request) {
 
     const allTasks = tasks ?? []
     const monthRecords = records ?? []
-    const recordTaskIds = new Set(monthRecords.map(r => r.tarea_id))
+    const recordsByTask = new Map<number, typeof monthRecords>()
+
+    for (const record of monthRecords) {
+      recordsByTask.set(record.tarea_id, [...(recordsByTask.get(record.tarea_id) ?? []), record])
+    }
+
+    // Solo se exportan tareas cerradas que tengan horas imputadas en el periodo seleccionado.
     const rows = allTasks.filter(task => {
-      const created = task.fecha_creacion >= start && task.fecha_creacion < end
-      const closed = Boolean(task.fecha_cierre && task.fecha_cierre >= start && task.fecha_cierre < end)
-      return created || closed || recordTaskIds.has(task.id)
+      const taskRecords = recordsByTask.get(task.id) ?? []
+      return taskRecords.reduce((sum, record) => sum + Number(record.horas), 0) > 0
     })
 
     const incidentIds = [...new Set(rows.map(t => t.incidencia_id).filter((id): id is number => Boolean(id)))]
@@ -81,11 +87,6 @@ export async function GET(request: Request) {
     const creatorById = new Map((creators ?? []).map(u => [u.id, u]))
     const userById = new Map((users ?? []).map(u => [u.id, u.nombre]))
     const centerById = new Map((centers ?? []).map(c => [c.id, c.nombre]))
-    const recordsByTask = new Map<number, typeof monthRecords>()
-
-    for (const record of monthRecords) {
-      recordsByTask.set(record.tarea_id, [...(recordsByTask.get(record.tarea_id) ?? []), record])
-    }
 
     const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
     const period = `${monthNames[monthNumber - 1]} de ${year}`
@@ -102,11 +103,9 @@ export async function GET(request: Request) {
       totalHours += hours
       hoursByCenter.set(centerName, (hoursByCenter.get(centerName) || 0) + hours)
 
-      const hourDetails = taskRecords.length
-        ? taskRecords.map(record => `<div class="hour"><span>${esc(date(record.fecha_creacion))}</span><span>${esc(userById.get(record.usuario_id) || `Usuario #${record.usuario_id}`)}</span><strong>${Number(record.horas).toFixed(2)} h</strong><span>${esc(record.comentario || 'Sin comentario')}</span></div>`).join('')
-        : '<span class="muted">Sin horas imputadas en el periodo</span>'
+      const hourDetails = taskRecords.map(record => `<div class="hour"><span>${esc(date(record.fecha_creacion))}</span><span>${esc(userById.get(record.usuario_id) || `Usuario #${record.usuario_id}`)}</span><strong>${Number(record.horas).toFixed(2)} h</strong><span>${esc(record.comentario || 'Sin comentario')}</span></div>`).join('')
 
-      return `<tr class="task"><td><strong>${esc(task.nombre)}</strong></td><td>${esc(creator?.nombre || 'Sin asignar')}</td><td>${esc(centerName)}</td><td class="number"><strong>${hours.toFixed(2)} h</strong></td><td>${esc(incident?.titulo || task.descripcion || '')}</td><td><div class="hours-list">${hourDetails}</div></td></tr>`
+      return `<tr class="task"><td>${esc(date(task.fecha_creacion))}</td><td><strong>${esc(task.nombre)}</strong></td><td>${esc(creator?.nombre || 'Sin asignar')}</td><td>${esc(centerName)}</td><td class="number"><strong>${hours.toFixed(2)} h</strong></td><td>${esc(incident?.titulo || task.descripcion || '')}</td><td><div class="hours-list">${hourDetails}</div></td></tr>`
     }).join('')
 
     const centerRows = [...hoursByCenter.entries()]
@@ -139,11 +138,11 @@ td{border:1px solid #c8d0da;padding:8px;vertical-align:top}
 </head>
 <body>
 <h1>REBIOS SL · REPORTE DE HORAS TASKER</h1>
-<p class="meta"><strong>Periodo:</strong> ${esc(period)} &nbsp; · &nbsp; <strong>Tareas:</strong> ${rows.length} &nbsp; · &nbsp; <strong>Total:</strong> ${totalHours.toFixed(2)} h</p>
+<p class="meta"><strong>Periodo:</strong> ${esc(period)} &nbsp; · &nbsp; <strong>Tareas cerradas:</strong> ${rows.length} &nbsp; · &nbsp; <strong>Total:</strong> ${totalHours.toFixed(2)} h</p>
 <table>
-<thead><tr><th>Nombre de la tarea</th><th>Usuario asignado</th><th>Centro de coste</th><th>Nº horas</th><th>Título</th><th>Todas las horas imputadas</th></tr></thead>
+<thead><tr><th>Fecha de creación</th><th>Nombre de la tarea</th><th>Usuario asignado</th><th>Centro de coste</th><th>Nº horas</th><th>Título</th><th>Todas las horas imputadas</th></tr></thead>
 <tbody>${body}</tbody>
-<tfoot><tr class="total"><td colspan="3">TOTAL</td><td class="number">${totalHours.toFixed(2)} h</td><td colspan="2"></td></tr></tfoot>
+<tfoot><tr class="total"><td colspan="4">TOTAL</td><td class="number">${totalHours.toFixed(2)} h</td><td colspan="2"></td></tr></tfoot>
 </table>
 
 <h2>Desglose de horas por centro de coste</h2>
