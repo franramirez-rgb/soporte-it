@@ -4,6 +4,9 @@ import { SignOutButton } from '@/components/sign-out-button'
 import { MobileMenu } from '@/components/mobile-menu'
 import { NotificationBell } from '@/components/notification-bell'
 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 export default async function PortalLayout({
   children,
 }: {
