@@ -14,7 +14,7 @@ export default async function Usuarios({ searchParams }: { searchParams: Promise
   const admin = profile.rol === 'admin'
 
   const [{ data: usersRaw, count }, { data: centersRaw }, { data: editingRaw }] = await Promise.all([
-    supabase.from('usuarios').select('id,nombre,email,rol,estado_cuenta,auth_user_id,puesto,departamento,centro_coste_id', { count: 'exact' }).order('nombre').range((page - 1) * pageSize, page * pageSize - 1),
+    supabase.from('usuarios').select('id,nombre,email,rol,estado_cuenta,auth_user_id,puesto,departamento,centro_coste_id', { count: 'exact' }).order('centro_coste_id').order('nombre').range((page - 1) * pageSize, page * pageSize - 1),
     supabase.from('centros_coste').select('id,nombre').order('nombre'),
     editId > 0 ? supabase.from('usuarios').select('id,nombre,email,rol,estado_cuenta,puesto,departamento,centro_coste_id').eq('id', editId).maybeSingle() : Promise.resolve({ data: null }),
   ])
@@ -31,6 +31,25 @@ export default async function Usuarios({ searchParams }: { searchParams: Promise
     if (editar) q.set('editar', String(editar))
     return `/usuarios?${q.toString()}`
   }
+
+  const groupedUsers = new Map<string, typeof users>()
+  for (const user of users) {
+    const centerName = user.centro_coste_id ? userCenterById.get(user.centro_coste_id) || 'Centro sin nombre' : 'Sin centro de coste'
+    const list = groupedUsers.get(centerName) ?? []
+    list.push(user)
+    groupedUsers.set(centerName, list)
+  }
+  const groupedSections = [...groupedUsers.entries()].sort(([a], [b]) => {
+    if (a === 'Sin centro de coste') return 1
+    if (b === 'Sin centro de coste') return -1
+    return a.localeCompare(b, 'es')
+  })
+
+  const renderUserRow = (user: (typeof users)[number]) => <tr key={user.id}>
+    <td><strong>{user.nombre}</strong><div className="small muted">{user.email}</div><div className="small muted">{user.puesto || 'Sin puesto'}{user.departamento ? ` · ${user.departamento}` : ''}</div></td><td><span className="badge slate">{user.rol}</span></td><td>{user.centro_coste_id ? userCenterById.get(user.centro_coste_id) || '—' : '—'}</td>
+    <td><span className={`badge ${user.estado_cuenta === 'activo' ? 'green' : user.estado_cuenta === 'pendiente' ? 'amber' : 'slate'}`}>{user.estado_cuenta}</span></td><td>{user.auth_user_id ? <span className="badge green">vinculado</span> : <span className="badge amber">sin acceso</span>}</td>
+    <td>{admin && <div className="row-actions"><Link className="btn btn-secondary btn-sm" href={query(page, user.id)}>Editar</Link>{user.estado_cuenta === 'pendiente' && <><form action={approveUser.bind(null, user.id)}><button className="btn btn-success btn-sm">Autorizar</button></form><form action={rejectUser.bind(null, user.id)}><button className="btn btn-danger btn-sm">Rechazar</button></form></>}{!user.auth_user_id && <form action={inviteExistingUser.bind(null, user.id)}><button className="btn btn-primary btn-sm">Invitar</button></form>}{user.id !== profile.id && <DeleteUserButton action={deleteUser.bind(null, user.id)} userName={user.nombre} />}</div>}</td>
+  </tr>
 
   return <div className="stack">
     <div className="hero"><div><h1>Usuarios</h1><p>Accesos, roles, departamentos y centros de coste.</p></div><span className="badge blue">{count || 0} usuarios</span></div>
@@ -55,13 +74,12 @@ export default async function Usuarios({ searchParams }: { searchParams: Promise
       <div className="card pad"><h2 className="section-title">Importación CSV</h2><form action={importUsersCsv} className="stack" encType="multipart/form-data" style={{ marginTop: 14 }}><input className="input" type="file" name="archivo_csv" accept=".csv,text/csv" required /><div className="notice info">Nombre;Correo;Centro_Coste;Puesto;Departamento;Rol;Password;Tipo_Equipo;Marca;Modelo;Identificador_SN</div><button className="btn btn-secondary">Importar CSV</button></form></div>
     </div>}
 
-    <div className="card"><div className="table-wrap"><table className="table"><thead><tr><th>Usuario</th><th>Rol</th><th>Centro de coste</th><th>Estado</th><th>Auth</th><th>Acciones</th></tr></thead><tbody>
-      {users.map(user => <tr key={user.id}>
-        <td><strong>{user.nombre}</strong><div className="small muted">{user.email}</div><div className="small muted">{user.puesto || 'Sin puesto'}{user.departamento ? ` · ${user.departamento}` : ''}</div></td><td><span className="badge slate">{user.rol}</span></td><td>{user.centro_coste_id ? userCenterById.get(user.centro_coste_id) || '—' : '—'}</td>
-        <td><span className={`badge ${user.estado_cuenta === 'activo' ? 'green' : user.estado_cuenta === 'pendiente' ? 'amber' : 'slate'}`}>{user.estado_cuenta}</span></td><td>{user.auth_user_id ? <span className="badge green">vinculado</span> : <span className="badge amber">sin acceso</span>}</td>
-        <td>{admin && <div className="row-actions"><Link className="btn btn-secondary btn-sm" href={query(page, user.id)}>Editar</Link>{user.estado_cuenta === 'pendiente' && <><form action={approveUser.bind(null, user.id)}><button className="btn btn-success btn-sm">Autorizar</button></form><form action={rejectUser.bind(null, user.id)}><button className="btn btn-danger btn-sm">Rechazar</button></form></>}{!user.auth_user_id && <form action={inviteExistingUser.bind(null, user.id)}><button className="btn btn-primary btn-sm">Invitar</button></form>}{user.id !== profile.id && <DeleteUserButton action={deleteUser.bind(null, user.id)} userName={user.nombre} />}</div>}</td>
-      </tr>)}
-    </tbody></table>{!users.length && <div className="empty">No hay usuarios.</div>}</div></div>
+    {groupedSections.map(([centerName, centerUsers]) => <section key={centerName} className="stack">
+      <div className="toolbar"><div><h2 className="section-title">{centerName}</h2><p className="section-subtitle">Usuarios de este centro de coste.</p></div><span className="badge blue">{centerUsers.length} usuarios</span></div>
+      <div className="card"><div className="table-wrap"><table className="table"><thead><tr><th>Usuario</th><th>Rol</th><th>Centro de coste</th><th>Estado</th><th>Auth</th><th>Acciones</th></tr></thead><tbody>{centerUsers.map(renderUserRow)}</tbody></table></div></div>
+    </section>)}
+
+    {!users.length && <div className="card"><div className="empty">No hay usuarios.</div></div>}
 
     {totalPages > 1 && <div className="pagination"><Link className="btn btn-secondary" href={query(Math.max(1, page - 1))}>Anterior</Link><span className="small muted">Página {page} de {totalPages}</span><Link className="btn btn-secondary" href={query(Math.min(totalPages, page + 1))}>Siguiente</Link></div>}
   </div>
